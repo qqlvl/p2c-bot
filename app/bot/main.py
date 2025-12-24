@@ -14,7 +14,7 @@ from app.core.db import init_db
 async def main() -> None:
     settings = get_settings()
     bot = Bot(
-        token=settings.bot_token,
+        token=settings.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()

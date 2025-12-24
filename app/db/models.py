@@ -2,23 +2,26 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String
+from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
 
-
-class Base(DeclarativeBase):
-    """Base class for declarative models."""
+Base = declarative_base()
 
 
 class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    tg_id: Mapped[int] = mapped_column(unique=True, index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
     accounts: Mapped[list["CryptoAccount"]] = relationship(
@@ -41,7 +44,7 @@ class CryptoAccount(Base):
     access_token_enc: Mapped[str | None] = mapped_column(String(1024))
     notification_chat_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime, default=datetime.utcnow
     )
 
     user: Mapped[User] = relationship(back_populates="accounts")
@@ -54,7 +57,7 @@ class AccountSettings(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True)
     notifications_enabled: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime, default=datetime.utcnow
     )
 
     user: Mapped[User] = relationship(back_populates="settings")
@@ -68,7 +71,7 @@ class Order(Base):
     status: Mapped[str | None] = mapped_column(String(50))
     amount: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime, default=datetime.utcnow
     )
 
     user: Mapped[User] = relationship(back_populates="orders")

@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy import func, select
 
-from app.core.db import get_sessionmaker
+from app.core.db import AsyncSessionLocal
 from app.db.models import CryptoAccount, User
 
 router = Router()
@@ -17,10 +17,10 @@ class AddAccount(StatesGroup):
 
 
 async def _get_or_create_user(session, from_user: types.User) -> User:
-    user = await session.scalar(select(User).where(User.tg_id == from_user.id))
+    user = await session.scalar(select(User).where(User.telegram_id == from_user.id))
     if user is None:
         user = User(
-            tg_id=from_user.id,
+            telegram_id=from_user.id,
             username=from_user.username,
             first_name=from_user.first_name,
         )
@@ -34,14 +34,13 @@ async def _get_or_create_user(session, from_user: types.User) -> User:
 @router.message(CommandStart())
 async def start(message: types.Message, state: FSMContext) -> None:
     await state.clear()
-    sessionmaker = get_sessionmaker()
     from_user = message.from_user
     if from_user is None:
         await message.answer("Не могу определить пользователя.")
         return
 
-    async with sessionmaker() as session:
-        user = await _get_or_create_user(session, from_user)
+    async with AsyncSessionLocal() as session:
+        await _get_or_create_user(session, from_user)
         await session.commit()
 
     await message.answer(
@@ -59,7 +58,6 @@ async def add_account(message: types.Message, state: FSMContext) -> None:
 
 @router.message(AddAccount.waiting_token)
 async def receive_account_token(message: types.Message, state: FSMContext) -> None:
-    sessionmaker = get_sessionmaker()
     from_user = message.from_user
     if from_user is None:
         await message.answer("Не могу определить пользователя.")
@@ -71,7 +69,7 @@ async def receive_account_token(message: types.Message, state: FSMContext) -> No
         await message.answer("Не вижу токен. Пришли строку сессии целиком.")
         return
 
-    async with sessionmaker() as session:
+    async with AsyncSessionLocal() as session:
         user = await _get_or_create_user(session, from_user)
         count = await session.scalar(
             select(func.count(CryptoAccount.id)).where(CryptoAccount.user_id == user.id)
@@ -92,14 +90,13 @@ async def receive_account_token(message: types.Message, state: FSMContext) -> No
 
 @router.message(Command("my_accounts"))
 async def my_accounts(message: types.Message) -> None:
-    sessionmaker = get_sessionmaker()
     from_user = message.from_user
     if from_user is None:
         await message.answer("Не могу определить пользователя.")
         return
 
-    async with sessionmaker() as session:
-        user = await session.scalar(select(User).where(User.tg_id == from_user.id))
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == from_user.id))
         if user is None:
             await message.answer("Пока нет подключённых аккаунтов.")
             return
