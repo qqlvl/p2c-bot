@@ -4,15 +4,17 @@ from aiogram import F, Router, types
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from sqlalchemy import func, select
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlalchemy import delete, func, select
 
 from app.bot.keyboards import (
     BTN_ADD_ACCOUNT,
     BTN_LIST_ACCOUNTS,
+    BTN_STATS,
     main_menu_kb,
 )
 from app.core.db import AsyncSessionLocal
-from app.db.models import CryptoAccount, User
+from app.db.models import AccountSettings, CryptoAccount, Order, User
 
 router = Router()
 
@@ -20,6 +22,10 @@ router = Router()
 class AddAccount(StatesGroup):
     waiting_token = State()
     waiting_name = State()
+
+
+class FilterAmount(StatesGroup):
+    waiting_value = State()
 
 
 async def _get_or_create_user(session, from_user: types.User) -> User:
@@ -63,7 +69,7 @@ async def _start_add_account_flow(message: types.Message, state: FSMContext) -> 
     )
 
 
-async def _show_accounts(message: types.Message) -> None:
+async def _show_accounts_inline(message: types.Message) -> None:
     from_user = message.from_user
     if from_user is None:
         await message.answer("Не могу определить пользователя.")
@@ -88,12 +94,19 @@ async def _show_accounts(message: types.Message) -> None:
         )
         return
 
-    lines = []
+    buttons = []
     for acc in accounts_list:
-        status = "🟢 активен" if acc.is_active else "⚪️ выключен"
-        lines.append(f"{acc.id}. {acc.name or 'Без названия'} — {status}")
+        text = f"{acc.name or 'Без названия'} (id={acc.id})"
+        buttons.append(
+            [InlineKeyboardButton(text=text, callback_data=f"acc:{acc.id}")]
+        )
 
-    await message.answer("Твои аккаунты:\n\n" + "\n".join(lines), reply_markup=main_menu_kb)
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await message.answer(
+        "Выбери аккаунт, с которым хочешь работать 👇",
+        reply_markup=kb,
+    )
 
 
 @router.message(Command("add_account"))
@@ -106,7 +119,7 @@ async def add_account(message: types.Message, state: FSMContext) -> None:
 @router.message(Command("accounts"))
 @router.message(F.text == BTN_LIST_ACCOUNTS)
 async def accounts(message: types.Message) -> None:
-    await _show_accounts(message)
+    await _show_accounts_inline(message)
 
 
 @router.message(AddAccount.waiting_token)
@@ -169,7 +182,7 @@ async def receive_account_name(message: types.Message, state: FSMContext) -> Non
     await state.clear()
     await message.answer(
         f"✅ Аккаунт {account_name} подключён.\n\n"
-        "Теперь я смогу использовать его для ловли заявок.",
+        "Теперь я смогу использовать его, чтобы получать откупы.",
         reply_markup=main_menu_kb,
     )
 
@@ -177,3 +190,180 @@ async def receive_account_name(message: types.Message, state: FSMContext) -> Non
 @router.message(Command("my_accounts"))
 async def my_accounts(message: types.Message) -> None:
     await accounts(message)
+
+
+@router.callback_query(F.data.startswith("acc:"))
+async def on_account_selected(callback: types.CallbackQuery) -> None:
+    data = callback.data or ""
+    _, acc_id_str = data.split(":", 1)
+    acc_id = int(acc_id_str)
+
+    from_user = callback.from_user
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == from_user.id))
+        if user is None:
+            await callback.answer("Сначала /start", show_alert=True)
+            return
+        account = await session.scalar(
+            select(CryptoAccount).where(
+                CryptoAccount.id == acc_id, CryptoAccount.user_id == user.id
+            )
+        )
+
+    if account is None:
+        await callback.answer("Аккаунт не найден", show_alert=True)
+        return
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎚 Фильтр по сумме",
+                    callback_data=f"accf:{acc_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🗑 Удалить аккаунт",
+                    callback_data=f"accdel:{acc_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад",
+                    callback_data="acc_back",
+                )
+            ],
+        ]
+    )
+
+    await callback.message.edit_text(
+        f"Аккаунт <b>{account.name or account.id}</b>\nЧто хочешь сделать?",
+        reply_markup=kb,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "acc_back")
+async def on_accounts_back(callback: types.CallbackQuery) -> None:
+    await _show_accounts_inline(callback.message)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("accf:"))
+async def on_account_filter(callback: types.CallbackQuery, state: FSMContext) -> None:
+    _, acc_id_str = (callback.data or "").split(":", 1)
+    await state.set_state(FilterAmount.waiting_value)
+    await state.update_data(account_id=int(acc_id_str))
+    await callback.answer()
+    await callback.message.answer(
+        "Введи минимальную сумму в фиате (например, 1500.00).",
+        reply_markup=main_menu_kb,
+    )
+
+
+@router.message(FilterAmount.waiting_value)
+async def on_filter_amount_input(message: types.Message, state: FSMContext) -> None:
+    from_user = message.from_user
+    if from_user is None:
+        await message.answer("Не могу определить пользователя.")
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    acc_id = data.get("account_id")
+    if acc_id is None:
+        await message.answer("Не вижу выбранный аккаунт. Начни заново через /accounts.")
+        await state.clear()
+        return
+
+    text_value = (message.text or "").replace(",", ".").strip()
+    try:
+        amount = float(text_value)
+        if amount < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Нужно число, например 1500.00. Попробуй снова.")
+        return
+
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == from_user.id))
+        if user is None:
+            await message.answer("Сначала напиши /start.")
+            await state.clear()
+            return
+
+        account = await session.scalar(
+            select(CryptoAccount).where(
+                CryptoAccount.id == acc_id, CryptoAccount.user_id == user.id
+            )
+        )
+        if account is None:
+            await message.answer("Аккаунт не найден. Начни заново через /accounts.")
+            await state.clear()
+            return
+
+        settings = account.settings
+        if settings is None:
+            settings = AccountSettings(account=account)
+            session.add(settings)
+        settings.min_amount_fiat = amount
+        await session.commit()
+
+    await state.clear()
+    await message.answer(
+        f"Минимальная сумма для {account.name or account.id} установлена: {amount:.2f}",
+        reply_markup=main_menu_kb,
+    )
+
+
+@router.callback_query(F.data.startswith("accdel:"))
+async def on_account_delete(callback: types.CallbackQuery) -> None:
+    _, acc_id_str = (callback.data or "").split(":", 1)
+    acc_id = int(acc_id_str)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Удалить",
+                    callback_data=f"accdelok:{acc_id}",
+                ),
+                InlineKeyboardButton(text="⬅️ Отмена", callback_data="acc_back"),
+            ]
+        ]
+    )
+    await callback.message.edit_text(
+        f"Удалить аккаунт ID {acc_id}? Это действие необратимо.",
+        reply_markup=kb,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("accdelok:"))
+async def on_account_delete_confirm(callback: types.CallbackQuery) -> None:
+    _, acc_id_str = (callback.data or "").split(":", 1)
+    acc_id = int(acc_id_str)
+    from_user = callback.from_user
+
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == from_user.id))
+        if user is None:
+            await callback.answer("Сначала /start", show_alert=True)
+            return
+
+        account = await session.scalar(
+            select(CryptoAccount).where(
+                CryptoAccount.id == acc_id, CryptoAccount.user_id == user.id
+            )
+        )
+        if account is None:
+            await callback.answer("Аккаунт не найден", show_alert=True)
+            return
+
+        await session.execute(delete(Order).where(Order.account_id == acc_id))
+        await session.delete(account)
+        await session.commit()
+
+    await callback.message.answer(f"Аккаунт ID {acc_id} удалён.")
+    await callback.answer()
+    await _show_accounts_inline(callback.message)

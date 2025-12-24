@@ -27,9 +27,6 @@ class User(Base):
     accounts: Mapped[list["CryptoAccount"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    settings: Mapped["AccountSettings"] = relationship(
-        back_populates="user", uselist=False, cascade="all, delete-orphan"
-    )
     orders: Mapped[list["Order"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
@@ -52,19 +49,25 @@ class CryptoAccount(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="accounts")
+    settings: Mapped["AccountSettings"] = relationship(
+        back_populates="account", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class AccountSettings(Base):
     __tablename__ = "account_settings"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("crypto_accounts.id"), unique=True, index=True
+    )
     notifications_enabled: Mapped[bool] = mapped_column(default=True)
+    min_amount_fiat: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow
     )
 
-    user: Mapped[User] = relationship(back_populates="settings")
+    account: Mapped[CryptoAccount] = relationship(back_populates="settings")
 
 
 class Order(Base):
