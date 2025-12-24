@@ -58,9 +58,7 @@ async def start(message: types.Message, state: FSMContext) -> None:
 async def _start_add_account_flow(message: types.Message, state: FSMContext) -> None:
     await state.set_state(AddAccount.waiting_token)
     await message.answer(
-        "Пришли мне <b>access token</b> от твоего P2C/CryptoBot аккаунта.\n\n"
-        "Я сохраню его и буду использовать для ловли заявок.\n"
-        "Если передумаешь — просто не отправляй токен и напиши /cancel.",
+        "Пришли мне <b>access token</b> от твоего P2C/CryptoBot аккаунта.\n\n",
         reply_markup=main_menu_kb,
     )
 
