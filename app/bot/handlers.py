@@ -65,27 +65,32 @@ async def receive_account_token(message: types.Message, state: FSMContext) -> No
         return
 
     token = message.text
-    if not token:
+    if not token or len(token.strip()) < 10:
         await message.answer("Не вижу токен. Пришли строку сессии целиком.")
         return
+    token = token.strip()
 
     async with AsyncSessionLocal() as session:
         user = await _get_or_create_user(session, from_user)
         count = await session.scalar(
             select(func.count(CryptoAccount.id)).where(CryptoAccount.user_id == user.id)
         )
-        account_name = f"Аккаунт #{(count or 0) + 1}"
+        account_name = f"Account #{(count or 0) + 1}"
         account = CryptoAccount(
             user=user,
             name=account_name,
             access_token_enc=token,
             notification_chat_id=from_user.id,
+            is_active=True,
         )
         session.add(account)
         await session.commit()
 
     await state.clear()
-    await message.answer(f"Готово, сохранил {account_name}.")
+    await message.answer(
+        f"✅ Аккаунт {account_name} подключён. "
+        "Позже можно будет настроить фильтры и ловлю заявок."
+    )
 
 
 @router.message(Command("my_accounts"))
@@ -115,3 +120,33 @@ async def my_accounts(message: types.Message) -> None:
         for idx, acc in enumerate(accounts_list)
     ]
     await message.answer("Твои аккаунты:\n" + "\n".join(lines))
+
+
+@router.message(Command("accounts"))
+async def accounts(message: types.Message) -> None:
+    from_user = message.from_user
+    if from_user is None:
+        await message.answer("Не могу определить пользователя.")
+        return
+
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == from_user.id))
+        if user is None:
+            await message.answer("Сначала напиши /start, чтобы зарегистрироваться.")
+            return
+
+        accounts_iter = await session.scalars(
+            select(CryptoAccount).where(CryptoAccount.user_id == user.id)
+        )
+        accounts_list = list(accounts_iter)
+
+    if not accounts_list:
+        await message.answer("У тебя пока нет подключённых аккаунтов.\nНапиши /add_account.")
+        return
+
+    lines = []
+    for acc in accounts_list:
+        status = "🟢 активен" if acc.is_active else "⚪️ выключен"
+        lines.append(f"{acc.id}. {acc.name or 'Без названия'} — {status}")
+
+    await message.answer("Твои аккаунты:\n\n" + "\n".join(lines))

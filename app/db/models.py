@@ -43,8 +43,12 @@ class CryptoAccount(Base):
     name: Mapped[str | None] = mapped_column(String(255))
     access_token_enc: Mapped[str | None] = mapped_column(String(1024))
     notification_chat_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
     user: Mapped[User] = relationship(back_populates="accounts")
