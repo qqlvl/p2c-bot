@@ -19,6 +19,7 @@ router = Router()
 
 class AddAccount(StatesGroup):
     waiting_token = State()
+    waiting_name = State()
 
 
 async def _get_or_create_user(session, from_user: types.User) -> User:
@@ -57,7 +58,9 @@ async def start(message: types.Message, state: FSMContext) -> None:
 async def _start_add_account_flow(message: types.Message, state: FSMContext) -> None:
     await state.set_state(AddAccount.waiting_token)
     await message.answer(
-        "Пришли мне <b>access token</b> от твоего P2C/CryptoBot аккаунта.\n\n",
+        "Пришли мне <b>access token</b> от твоего P2C/CryptoBot аккаунта.\n\n"
+        "Я сохраню его и буду использовать для ловли заявок.\n"
+        "Если передумаешь — просто не отправляй токен и напиши /cancel.",
         reply_markup=main_menu_kb,
     )
 
@@ -122,12 +125,39 @@ async def receive_account_token(message: types.Message, state: FSMContext) -> No
         return
     token = token.strip()
 
+    await state.update_data(access_token=token)
+    await state.set_state(AddAccount.waiting_name)
+    await message.answer(
+        "Как назвать этот аккаунт? Напиши имя или пришлю дефолтное.",
+        reply_markup=main_menu_kb,
+    )
+
+
+@router.message(AddAccount.waiting_name)
+async def receive_account_name(message: types.Message, state: FSMContext) -> None:
+    from_user = message.from_user
+    if from_user is None:
+        await message.answer("Не могу определить пользователя.")
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    token = data.get("access_token")
+    if not token:
+        await message.answer("Не вижу токен. Начни заново командой /add_account.")
+        await state.clear()
+        return
+
+    provided_name = (message.text or "").strip()
+
     async with AsyncSessionLocal() as session:
         user = await _get_or_create_user(session, from_user)
         count = await session.scalar(
             select(func.count(CryptoAccount.id)).where(CryptoAccount.user_id == user.id)
         )
-        account_name = f"Account #{(count or 0) + 1}"
+        default_name = f"Account #{(count or 0) + 1}"
+        account_name = provided_name or default_name
+
         account = CryptoAccount(
             user=user,
             name=account_name,
@@ -140,7 +170,8 @@ async def receive_account_token(message: types.Message, state: FSMContext) -> No
 
     await state.clear()
     await message.answer(
-        f"✅ Аккаунт {account_name} подключён.\n\n",
+        f"✅ Аккаунт {account_name} подключён.\n\n"
+        "Теперь я смогу использовать его для ловли заявок.",
         reply_markup=main_menu_kb,
     )
 
@@ -148,33 +179,3 @@ async def receive_account_token(message: types.Message, state: FSMContext) -> No
 @router.message(Command("my_accounts"))
 async def my_accounts(message: types.Message) -> None:
     await accounts(message)
-
-
-@router.message(Command("accounts"))
-async def accounts(message: types.Message) -> None:
-    from_user = message.from_user
-    if from_user is None:
-        await message.answer("Не могу определить пользователя.")
-        return
-
-    async with AsyncSessionLocal() as session:
-        user = await session.scalar(select(User).where(User.telegram_id == from_user.id))
-        if user is None:
-            await message.answer("Сначала напиши /start, чтобы зарегистрироваться.")
-            return
-
-        accounts_iter = await session.scalars(
-            select(CryptoAccount).where(CryptoAccount.user_id == user.id)
-        )
-        accounts_list = list(accounts_iter)
-
-    if not accounts_list:
-        await message.answer("У тебя пока нет подключённых аккаунтов.\nНапиши /add_account.")
-        return
-
-    lines = []
-    for acc in accounts_list:
-        status = "🟢 активен" if acc.is_active else "⚪️ выключен"
-        lines.append(f"{acc.id}. {acc.name or 'Без названия'} — {status}")
-
-    await message.answer("Твои аккаунты:\n\n" + "\n".join(lines))

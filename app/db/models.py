@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
 
 Base = declarative_base()
@@ -71,11 +71,26 @@ class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    external_id: Mapped[str] = mapped_column(String(128), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    status: Mapped[str | None] = mapped_column(String(50))
-    amount: Mapped[str | None] = mapped_column(String(100))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow
+    account_id: Mapped[int] = mapped_column(ForeignKey("crypto_accounts.id"), index=True)
+
+    amount_fiat: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
+    fiat_currency: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+    amount_crypto: Mapped[float | None] = mapped_column(Numeric(18, 8), nullable=True)
+    crypto_currency: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+    rate: Mapped[float | None] = mapped_column(Numeric(18, 6), nullable=True)
+
+    status: Mapped[str | None] = mapped_column(String(32), index=True)
+    our_fee_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), default=2.0)
+    our_fee_amount: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
     user: Mapped[User] = relationship(back_populates="orders")
