@@ -42,7 +42,8 @@ func NewWorker(cfg WorkerConfig, client *p2c.Client, botToken string) *Worker {
 func (w *Worker) Start() {
 	go func() {
 		defer close(w.doneCh)
-		ticker := time.NewTicker(5 * time.Second)
+		// Опрашиваем не чаще, чем ~2 сек, чтобы укладываться в лимит ~40 запросов/мин.
+		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
@@ -95,12 +96,15 @@ func (w *Worker) pollOnce(t time.Time) {
 	for _, p := range payments.Data {
 		amountFiat := p.AmountFiatValue()
 		if w.cfg.MinAmount != nil && amountFiat < *w.cfg.MinAmount {
+			log.Printf("[worker %d] skip %s: below min %.2f < %.2f", w.cfg.AccountID, p.ID, amountFiat, *w.cfg.MinAmount)
 			continue
 		}
 		if w.cfg.MaxAmount != nil && amountFiat > *w.cfg.MaxAmount {
+			log.Printf("[worker %d] skip %s: above max %.2f > %.2f", w.cfg.AccountID, p.ID, amountFiat, *w.cfg.MaxAmount)
 			continue
 		}
 
+		log.Printf("[worker %d] trying take payment %s amount=%.2f %s", w.cfg.AccountID, p.ID, amountFiat, p.Fiat)
 		if err := w.client.TakePayment(context.Background(), p.ID); err != nil {
 			log.Printf("[worker %d] take payment %s error: %v", w.cfg.AccountID, p.ID, err)
 			w.sendTelegram(buildMessage(p, false, err.Error()))
