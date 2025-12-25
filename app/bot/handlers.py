@@ -5,6 +5,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import delete, func, select
 
 from app.bot.keyboards import (
@@ -330,7 +331,11 @@ async def on_account_selected(callback: types.CallbackQuery) -> None:
         reply_markup=kb,
     )
     if getattr(callback, "bot", None):
-        await callback.answer()
+        try:
+            await callback.answer()
+        except TelegramBadRequest:
+            # Callback may be too old; ignore.
+            pass
 
 
 @router.callback_query(F.data == "acc_back")
