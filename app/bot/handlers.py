@@ -16,6 +16,7 @@ from app.bot.keyboards import (
 from app.core.config import get_settings
 from app.core.db import AsyncSessionLocal
 from app.db.models import AccountSettings, CryptoAccount, Order, User
+from app.services.engine_client import engine_client
 import httpx
 
 
@@ -30,6 +31,10 @@ async def refresh_account_view(callback: types.CallbackQuery, acc_id: int) -> No
             message=callback.message,
         )
     )
+
+
+async def _engine_reload(account_id: int) -> None:
+    await engine_client.reload_account(account_id)
 
 router = Router()
 
@@ -200,6 +205,7 @@ async def receive_account_name(message: types.Message, state: FSMContext) -> Non
         )
         session.add(account)
         await session.commit()
+        await _engine_reload(account.id)
 
     await state.clear()
     await message.answer(
@@ -401,6 +407,7 @@ async def on_filter_amount_max(message: types.Message, state: FSMContext) -> Non
         f"макс: {max_val if max_val is not None else 'нет'}",
         reply_markup=main_menu_kb,
     )
+    await _engine_reload(acc_id)
 
 
 @router.callback_query(F.data.startswith("accdel:"))
@@ -453,6 +460,7 @@ async def on_account_delete_confirm(callback: types.CallbackQuery) -> None:
     await callback.message.answer(f"Аккаунт ID {acc_id} удалён.")
     await callback.answer()
     await _show_accounts_inline(callback.message)
+    await _engine_reload(acc_id)
 
 
 @router.callback_query(F.data.startswith("accact:"))
@@ -482,6 +490,7 @@ async def on_account_toggle_active(callback: types.CallbackQuery) -> None:
 
     await callback.answer(f"Аккаунт {status}.")
     await refresh_account_view(callback, acc_id)
+    await _engine_reload(acc_id)
 
 
 
@@ -519,3 +528,4 @@ async def on_account_auto_toggle(callback: types.CallbackQuery) -> None:
 
     await callback.answer(f"Приём заявок {new_state}.")
     await refresh_account_view(callback, acc_id)
+    await _engine_reload(acc_id)
