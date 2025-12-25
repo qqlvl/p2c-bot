@@ -22,15 +22,14 @@ import httpx
 
 async def refresh_account_view(callback: types.CallbackQuery, acc_id: int) -> None:
     # Re-render account menu by reusing selection logic.
-    await on_account_selected(
-        types.CallbackQuery(
-            id=callback.id,
-            from_user=callback.from_user,
-            chat_instance=callback.chat_instance,
-            data=f"acc:{acc_id}",
-            message=callback.message,
-        )
+    fake_cb = types.CallbackQuery(
+        id=callback.id,
+        from_user=callback.from_user,
+        chat_instance=callback.chat_instance,
+        data=f"acc:{acc_id}",
+        message=callback.message,
     )
+    await on_account_selected(fake_cb)
 
 
 async def _engine_reload(
