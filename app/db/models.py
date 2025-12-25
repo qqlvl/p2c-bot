@@ -63,6 +63,8 @@ class AccountSettings(Base):
     )
     notifications_enabled: Mapped[bool] = mapped_column(default=True)
     min_amount_fiat: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
+    max_amount_fiat: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
+    auto_mode: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow
     )

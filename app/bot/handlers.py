@@ -25,7 +25,8 @@ class AddAccount(StatesGroup):
 
 
 class FilterAmount(StatesGroup):
-    waiting_value = State()
+    waiting_min = State()
+    waiting_max = State()
 
 
 async def _get_or_create_user(session, from_user: types.User) -> User:
@@ -224,6 +225,12 @@ async def on_account_selected(callback: types.CallbackQuery) -> None:
             ],
             [
                 InlineKeyboardButton(
+                    text="⚡️ Авто-режим",
+                    callback_data=f"accauto:{acc_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="🗑 Удалить аккаунт",
                     callback_data=f"accdel:{acc_id}",
                 )
@@ -253,17 +260,36 @@ async def on_accounts_back(callback: types.CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("accf:"))
 async def on_account_filter(callback: types.CallbackQuery, state: FSMContext) -> None:
     _, acc_id_str = (callback.data or "").split(":", 1)
-    await state.set_state(FilterAmount.waiting_value)
     await state.update_data(account_id=int(acc_id_str))
+    await state.set_state(FilterAmount.waiting_min)
     await callback.answer()
     await callback.message.answer(
-        "Введи минимальную сумму в фиате (например, 1500.00).",
+        "Введи минимальную сумму в фиате (например, 1500.00). 0 — без нижней границы.",
         reply_markup=main_menu_kb,
     )
 
 
-@router.message(FilterAmount.waiting_value)
-async def on_filter_amount_input(message: types.Message, state: FSMContext) -> None:
+@router.message(FilterAmount.waiting_min)
+async def on_filter_amount_min(message: types.Message, state: FSMContext) -> None:
+    text_value = (message.text or "").replace(",", ".").strip()
+    try:
+        amount = float(text_value)
+        if amount < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Нужно число, например 1500.00 или 0. Попробуй снова.")
+        return
+
+    await state.update_data(min_amount=amount)
+    await state.set_state(FilterAmount.waiting_max)
+    await message.answer(
+        "Теперь введи максимальную сумму (0 — без верхнего лимита).",
+        reply_markup=main_menu_kb,
+    )
+
+
+@router.message(FilterAmount.waiting_max)
+async def on_filter_amount_max(message: types.Message, state: FSMContext) -> None:
     from_user = message.from_user
     if from_user is None:
         await message.answer("Не могу определить пользователя.")
@@ -272,6 +298,7 @@ async def on_filter_amount_input(message: types.Message, state: FSMContext) -> N
 
     data = await state.get_data()
     acc_id = data.get("account_id")
+    min_amount = data.get("min_amount", 0)
     if acc_id is None:
         await message.answer("Не вижу выбранный аккаунт. Начни заново через /accounts.")
         await state.clear()
@@ -279,11 +306,18 @@ async def on_filter_amount_input(message: types.Message, state: FSMContext) -> N
 
     text_value = (message.text or "").replace(",", ".").strip()
     try:
-        amount = float(text_value)
-        if amount < 0:
+        max_amount = float(text_value)
+        if max_amount < 0:
             raise ValueError
     except ValueError:
-        await message.answer("Нужно число, например 1500.00. Попробуй снова.")
+        await message.answer("Нужно число, например 2500.00 или 0. Попробуй снова.")
+        return
+
+    # Interpret 0 as no limit.
+    min_val = None if min_amount == 0 else min_amount
+    max_val = None if max_amount == 0 else max_amount
+    if min_val is not None and max_val is not None and max_val < min_val:
+        await message.answer("Максимум не может быть меньше минимума. Попробуй снова.")
         return
 
     async with AsyncSessionLocal() as session:
@@ -309,12 +343,15 @@ async def on_filter_amount_input(message: types.Message, state: FSMContext) -> N
         if settings is None:
             settings = AccountSettings(account_id=acc_id)
             session.add(settings)
-        settings.min_amount_fiat = amount
+        settings.min_amount_fiat = min_val
+        settings.max_amount_fiat = max_val
         await session.commit()
 
     await state.clear()
     await message.answer(
-        f"Минимальная сумма для {account.name or account.id} установлена: {amount:.2f}",
+        f"Фильтр для {account.name or account.id} сохранён:\n"
+        f"мин: {min_val if min_val is not None else 'нет'}, "
+        f"макс: {max_val if max_val is not None else 'нет'}",
         reply_markup=main_menu_kb,
     )
 
@@ -369,3 +406,41 @@ async def on_account_delete_confirm(callback: types.CallbackQuery) -> None:
     await callback.message.answer(f"Аккаунт ID {acc_id} удалён.")
     await callback.answer()
     await _show_accounts_inline(callback.message)
+
+
+@router.callback_query(F.data.startswith("accauto:"))
+async def on_account_auto_toggle(callback: types.CallbackQuery) -> None:
+    _, acc_id_str = (callback.data or "").split(":", 1)
+    acc_id = int(acc_id_str)
+    from_user = callback.from_user
+
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == from_user.id))
+        if user is None:
+            await callback.answer("Сначала /start", show_alert=True)
+            return
+
+        account = await session.scalar(
+            select(CryptoAccount).where(
+                CryptoAccount.id == acc_id, CryptoAccount.user_id == user.id
+            )
+        )
+        if account is None:
+            await callback.answer("Аккаунт не найден", show_alert=True)
+            return
+
+        settings = await session.scalar(
+            select(AccountSettings).where(AccountSettings.account_id == acc_id)
+        )
+        if settings is None:
+            settings = AccountSettings(account_id=acc_id)
+            session.add(settings)
+        settings.auto_mode = not settings.auto_mode
+        await session.commit()
+        new_state = "включен" if settings.auto_mode else "выключен"
+
+    await callback.message.answer(
+        f"Авто-режим для {account.name or account.id} {new_state}.",
+        reply_markup=main_menu_kb,
+    )
+    await callback.answer()
