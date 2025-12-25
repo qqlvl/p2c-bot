@@ -230,9 +230,9 @@ async def receive_account_name(message: types.Message, state: FSMContext) -> Non
             account.id,
             account.access_token_enc,
             chat_id=account.notification_chat_id,
-            min_amount=settings.min_amount_fiat if settings else None,
-            max_amount=settings.max_amount_fiat if settings else None,
-            auto_mode=settings.auto_mode if settings else None,
+            min_amount=None,
+            max_amount=None,
+            auto_mode=None,
             is_active=account.is_active,
         )
 
