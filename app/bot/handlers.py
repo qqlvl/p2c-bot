@@ -578,7 +578,7 @@ async def on_account_auto_toggle(callback: types.CallbackQuery) -> None:
     await refresh_account_view(callback, acc_id)
     await _engine_reload(
         acc_id,
-        settings.access_token_enc if settings else None,
+        account.access_token_enc,
         chat_id=account.notification_chat_id,
         min_amount=settings.min_amount_fiat if settings else None,
         max_amount=settings.max_amount_fiat if settings else None,
