@@ -92,6 +92,9 @@ func (w *Worker) pollOnce(t time.Time) {
 		log.Printf("[worker %d] poll error: %v", w.cfg.AccountID, err)
 		return
 	}
+	if len(payments.Data) == 0 {
+		return
+	}
 
 	for _, p := range payments.Data {
 		amountFiat := p.AmountFiatValue()

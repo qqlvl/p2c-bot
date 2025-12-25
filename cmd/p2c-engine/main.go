@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -27,8 +28,10 @@ func main() {
 
 	go func() {
 		log.Printf("p2c-engine HTTP listening on %s", addr)
-		if err := srv.Start(); err != nil {
+		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server failed: %v", err)
+		} else {
+			log.Printf("server stopped: %v", err)
 		}
 	}()
 
