@@ -12,3 +12,10 @@ venv/
 # Secrets and local data
 .env
 p2c.db
+
+# Go build
+bin/
+*.exe
+*.out
+*.test
+**/dist/
