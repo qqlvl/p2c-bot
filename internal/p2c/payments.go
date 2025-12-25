@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/valyala/fasthttp"
+	"strconv"
 )
 
 type PaymentStatus string
@@ -19,13 +20,25 @@ const (
 )
 
 type Payment struct {
-	ID         string        `json:"id"`
-	Asset      string        `json:"asset"`
-	Amount     string        `json:"amount"`
-	AmountFiat string        `json:"amount_in_fiat"`
-	Fiat       string        `json:"fiat"`
-	Status     PaymentStatus `json:"status"`
-	Processing string        `json:"processing_at"`
+	ID           string        `json:"id"`
+	Asset        string        `json:"out_asset"`
+	Amount       string        `json:"out_amount"`
+	AmountFiat   string        `json:"in_amount"`
+	Fiat         string        `json:"in_asset"`
+	ExchangeRate string        `json:"exchange_rate"`
+	RewardAmount string        `json:"reward_amount"`
+	URL          string        `json:"url"`
+	BrandName    string        `json:"brand_name"`
+	Status       PaymentStatus `json:"status"`
+	Processing   string        `json:"processing_at"`
+}
+
+func (p Payment) AmountFiatValue() float64 {
+	val, err := strconv.ParseFloat(p.AmountFiat, 64)
+	if err != nil {
+		return 0
+	}
+	return val
 }
 
 type ListPaymentsParams struct {

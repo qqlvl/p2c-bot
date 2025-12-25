@@ -54,15 +54,29 @@ func (s *Server) handleReloadAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		AccountID    int64  `json:"account_id"`
-		AccessToken  string `json:"access_token"`
+		AccountID   int64    `json:"account_id"`
+		AccessToken string   `json:"access_token"`
+		ChatID      int64    `json:"chat_id"`
+		MinAmount   *float64 `json:"min_amount"`
+		MaxAmount   *float64 `json:"max_amount"`
+		AutoMode    *bool    `json:"auto_mode"`
+		IsActive    *bool    `json:"is_active"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.AccountID == 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	s.mgr.ReloadAccount(req.AccountID, req.AccessToken)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "reloaded"})
+	cfg := engine.WorkerConfig{
+		AccountID:   req.AccountID,
+		AccessToken: req.AccessToken,
+		ChatID:      req.ChatID,
+		MinAmount:   req.MinAmount,
+		MaxAmount:   req.MaxAmount,
+		AutoMode:    req.AutoMode != nil && *req.AutoMode,
+		Active:      req.IsActive == nil || *req.IsActive,
+	}
+	s.mgr.ReloadAccount(cfg)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "reloaded", "ok": true})
 }
 
 func (s *Server) handleTakeOrder(w http.ResponseWriter, r *http.Request) {

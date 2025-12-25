@@ -33,8 +33,29 @@ async def refresh_account_view(callback: types.CallbackQuery, acc_id: int) -> No
     )
 
 
-async def _engine_reload(account_id: int, access_token: str | None = None) -> None:
-    await engine_client.reload_account(account_id, access_token)
+async def _engine_reload(
+    account_id: int,
+    access_token: str | None,
+    *,
+    chat_id: int | None = None,
+    min_amount: float | None = None,
+    max_amount: float | None = None,
+    auto_mode: bool | None = None,
+    is_active: bool | None = None,
+) -> None:
+    if min_amount is not None:
+        min_amount = float(min_amount)
+    if max_amount is not None:
+        max_amount = float(max_amount)
+    await engine_client.reload_account(
+        account_id=account_id,
+        access_token=access_token,
+        chat_id=chat_id,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        auto_mode=auto_mode,
+        is_active=is_active,
+    )
 
 router = Router()
 
@@ -205,7 +226,15 @@ async def receive_account_name(message: types.Message, state: FSMContext) -> Non
         )
         session.add(account)
         await session.commit()
-        await _engine_reload(account.id, account.access_token_enc)
+        await _engine_reload(
+            account.id,
+            account.access_token_enc,
+            chat_id=account.notification_chat_id,
+            min_amount=settings.min_amount_fiat if settings else None,
+            max_amount=settings.max_amount_fiat if settings else None,
+            auto_mode=settings.auto_mode if settings else None,
+            is_active=account.is_active,
+        )
 
     await state.clear()
     await message.answer(
@@ -407,7 +436,15 @@ async def on_filter_amount_max(message: types.Message, state: FSMContext) -> Non
         f"макс: {max_val if max_val is not None else 'нет'}",
         reply_markup=main_menu_kb,
     )
-    await _engine_reload(acc_id, account.access_token_enc)
+    await _engine_reload(
+        acc_id,
+        account.access_token_enc,
+        chat_id=account.notification_chat_id,
+        min_amount=min_val,
+        max_amount=max_val,
+        auto_mode=settings.auto_mode if settings else None,
+        is_active=account.is_active,
+    )
 
 
 @router.callback_query(F.data.startswith("accdel:"))
@@ -480,6 +517,9 @@ async def on_account_toggle_active(callback: types.CallbackQuery) -> None:
                 CryptoAccount.id == acc_id, CryptoAccount.user_id == user.id
             )
         )
+        settings = await session.scalar(
+            select(AccountSettings).where(AccountSettings.account_id == acc_id)
+        )
         if account is None:
             await callback.answer("Аккаунт не найден", show_alert=True)
             return
@@ -490,7 +530,15 @@ async def on_account_toggle_active(callback: types.CallbackQuery) -> None:
 
     await callback.answer(f"Аккаунт {status}.")
     await refresh_account_view(callback, acc_id)
-    await _engine_reload(acc_id, account.access_token_enc)
+    await _engine_reload(
+        acc_id,
+        account.access_token_enc,
+        chat_id=account.notification_chat_id,
+        min_amount=settings.min_amount_fiat if settings else None,
+        max_amount=settings.max_amount_fiat if settings else None,
+        auto_mode=settings.auto_mode if settings else None,
+        is_active=account.is_active,
+    )
 
 
 
@@ -528,4 +576,12 @@ async def on_account_auto_toggle(callback: types.CallbackQuery) -> None:
 
     await callback.answer(f"Приём заявок {new_state}.")
     await refresh_account_view(callback, acc_id)
-    await _engine_reload(acc_id, settings.access_token_enc if settings else None)
+    await _engine_reload(
+        acc_id,
+        settings.access_token_enc if settings else None,
+        chat_id=account.notification_chat_id,
+        min_amount=settings.min_amount_fiat if settings else None,
+        max_amount=settings.max_amount_fiat if settings else None,
+        auto_mode=settings.auto_mode if settings else None,
+        is_active=account.is_active,
+    )

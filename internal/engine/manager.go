@@ -13,27 +13,30 @@ type Manager struct {
 	mu      sync.Mutex
 	workers map[int64]*Worker
 	client  *p2c.Client
+	botToken string
 }
 
-func NewManager(client *p2c.Client) *Manager {
+func NewManager(client *p2c.Client, botToken string) *Manager {
 	return &Manager{
 		workers: make(map[int64]*Worker),
 		client:  client,
+		botToken: botToken,
 	}
 }
 
-// ReloadAccount ensures a worker exists and restarts it with fresh settings (stub).
-func (m *Manager) ReloadAccount(accountID int64, accessToken string) {
+// ReloadAccount ensures a worker exists and restarts it with fresh settings.
+func (m *Manager) ReloadAccount(cfg WorkerConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if w, ok := m.workers[accountID]; ok {
+	if w, ok := m.workers[cfg.AccountID]; ok {
 		w.Stop()
 	}
 
 	// Build a per-account client with provided token.
-	w := NewWorker(accountID, p2c.NewClient(m.client.BaseURL(), accessToken))
-	m.workers[accountID] = w
+	client := p2c.NewClient(m.client.BaseURL(), cfg.AccessToken)
+	w := NewWorker(cfg, client, m.botToken)
+	m.workers[cfg.AccountID] = w
 	w.Start()
 }
 
@@ -55,7 +58,7 @@ func (m *Manager) TakeOrder(ctx context.Context, accountID int64, externalID str
 	m.mu.Unlock()
 	if !ok {
 		// If worker is absent, start it lazily.
-		m.ReloadAccount(accountID, "")
+		m.ReloadAccount(WorkerConfig{AccountID: accountID})
 		m.mu.Lock()
 		w = m.workers[accountID]
 		m.mu.Unlock()

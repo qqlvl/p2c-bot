@@ -10,18 +10,32 @@ import (
 
 // Worker is a stub that will later connect to P2C and process orders.
 type Worker struct {
-	accountID int64
-	stopCh    chan struct{}
-	doneCh    chan struct{}
-	client    *p2c.Client
+	cfg         WorkerConfig
+	stopCh      chan struct{}
+	doneCh      chan struct{}
+	client      *p2c.Client
+	botToken    string
+	hasActive   bool
+	activeUntil time.Time
 }
 
-func NewWorker(accountID int64, client *p2c.Client) *Worker {
+type WorkerConfig struct {
+	AccountID   int64
+	AccessToken string
+	ChatID      int64
+	MinAmount   *float64
+	MaxAmount   *float64
+	AutoMode    bool
+	Active      bool
+}
+
+func NewWorker(cfg WorkerConfig, client *p2c.Client, botToken string) *Worker {
 	return &Worker{
-		accountID: accountID,
-		stopCh:    make(chan struct{}),
-		doneCh:    make(chan struct{}),
-		client:    client,
+		cfg:      cfg,
+		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
+		client:   client,
+		botToken: botToken,
 	}
 }
 
@@ -33,10 +47,9 @@ func (w *Worker) Start() {
 		for {
 			select {
 			case <-w.stopCh:
-				log.Printf("[worker %d] stopped", w.accountID)
+				log.Printf("[worker %d] stopped", w.cfg.AccountID)
 				return
 			case t := <-ticker.C:
-				// Placeholder: poll payments endpoint as a stub.
 				w.pollOnce(t)
 			}
 		}
@@ -50,7 +63,7 @@ func (w *Worker) Stop() {
 
 // TakeOrder is a stub for manual mode; will later hit P2C API.
 func (w *Worker) TakeOrder(_ context.Context, externalID string) error {
-	log.Printf("[worker %d] received request to take order %s (stub)", w.accountID, externalID)
+	log.Printf("[worker %d] received request to take order %s (stub)", w.cfg.AccountID, externalID)
 	return nil
 }
 
@@ -58,15 +71,52 @@ func (w *Worker) pollOnce(t time.Time) {
 	if w.client == nil {
 		return
 	}
+	if !w.cfg.Active || !w.cfg.AutoMode {
+		return
+	}
+
+	// release active lock after 30s to avoid perma-block
+	if w.hasActive && time.Now().After(w.activeUntil) {
+		w.hasActive = false
+	}
+	if w.hasActive {
+		return
+	}
+
 	payments, err := w.client.ListPayments(context.Background(), p2c.ListPaymentsParams{
 		Size:   5,
 		Status: p2c.StatusProcessing,
 	})
 	if err != nil {
-		log.Printf("[worker %d] poll error: %v", w.accountID, err)
+		log.Printf("[worker %d] poll error: %v", w.cfg.AccountID, err)
 		return
 	}
-	if len(payments.Data) > 0 {
-		log.Printf("[worker %d] %d payments at %s", w.accountID, len(payments.Data), t.Format(time.RFC3339))
+
+	for _, p := range payments.Data {
+		amountFiat := p.AmountFiatValue()
+		if w.cfg.MinAmount != nil && amountFiat < *w.cfg.MinAmount {
+			continue
+		}
+		if w.cfg.MaxAmount != nil && amountFiat > *w.cfg.MaxAmount {
+			continue
+		}
+
+		if err := w.client.TakePayment(context.Background(), p.ID); err != nil {
+			log.Printf("[worker %d] take payment %s error: %v", w.cfg.AccountID, p.ID, err)
+			w.sendTelegram(buildMessage(p, false, err.Error()))
+			continue
+		}
+
+		w.hasActive = true
+		w.activeUntil = time.Now().Add(30 * time.Second)
+		w.sendTelegram(buildMessage(p, true, ""))
+		break // берем по одной
 	}
+}
+
+func (w *Worker) sendTelegram(text string) {
+	if w.botToken == "" || w.cfg.ChatID == 0 {
+		return
+	}
+	_ = sendMessage(w.botToken, w.cfg.ChatID, text)
 }

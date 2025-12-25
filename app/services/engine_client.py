@@ -15,13 +15,32 @@ class P2CEngineClient:
             return ""
         return f"{self.base_url}{path}"
 
-    async def reload_account(self, account_id: int, access_token: str | None = None) -> bool:
+    async def reload_account(
+        self,
+        account_id: int,
+        access_token: str | None = None,
+        chat_id: int | None = None,
+        min_amount: float | None = None,
+        max_amount: float | None = None,
+        auto_mode: bool | None = None,
+        is_active: bool | None = None,
+    ) -> bool:
         url = self._build_url("/accounts/reload")
         if not url:
             return False
         payload: dict[str, object] = {"account_id": account_id}
         if access_token:
             payload["access_token"] = access_token
+        if chat_id is not None:
+            payload["chat_id"] = chat_id
+        if min_amount is not None:
+            payload["min_amount"] = min_amount
+        if max_amount is not None:
+            payload["max_amount"] = max_amount
+        if auto_mode is not None:
+            payload["auto_mode"] = auto_mode
+        if is_active is not None:
+            payload["is_active"] = is_active
         async with httpx.AsyncClient(timeout=2.0) as client:
             try:
                 resp = await client.post(url, json=payload)

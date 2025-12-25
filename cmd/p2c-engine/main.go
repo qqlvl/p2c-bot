@@ -16,10 +16,10 @@ import (
 func main() {
 	addr := getenv("ENGINE_ADDR", ":8080")
 	baseURL := getenv("P2C_BASE_URL", "https://app.cr.bot/internal/v1")
-	accessToken := os.Getenv("P2C_ACCESS_TOKEN")
+	botToken := os.Getenv("P2C_BOT_TOKEN")
 
-	p2cClient := p2c.NewClient(baseURL, accessToken)
-	mgr := engine.NewManager(p2cClient)
+	p2cClient := p2c.NewClient(baseURL, "")
+	mgr := engine.NewManager(p2cClient, botToken)
 	srv := httpserver.New(addr, mgr)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
