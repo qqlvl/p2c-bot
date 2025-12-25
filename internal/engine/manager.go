@@ -4,17 +4,21 @@ import (
 	"context"
 	"log"
 	"sync"
+
+	"p2c-engine/internal/p2c"
 )
 
 // Manager orchestrates account workers.
 type Manager struct {
 	mu      sync.Mutex
 	workers map[int64]*Worker
+	client  *p2c.Client
 }
 
-func NewManager() *Manager {
+func NewManager(client *p2c.Client) *Manager {
 	return &Manager{
 		workers: make(map[int64]*Worker),
+		client:  client,
 	}
 }
 
@@ -27,7 +31,7 @@ func (m *Manager) ReloadAccount(accountID int64) {
 		w.Stop()
 	}
 
-	w := NewWorker(accountID)
+	w := NewWorker(accountID, m.client)
 	m.workers[accountID] = w
 	w.Start()
 }
