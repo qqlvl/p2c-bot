@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     BOT_TOKEN: str
     DB_URL: str = "sqlite+aiosqlite:///./p2c.db"
+    ENGINE_URL: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

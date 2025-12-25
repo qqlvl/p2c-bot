@@ -41,6 +41,7 @@ class CryptoAccount(Base):
     access_token_enc: Mapped[str | None] = mapped_column(String(1024))
     notification_chat_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    fiat_currency: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow
     )

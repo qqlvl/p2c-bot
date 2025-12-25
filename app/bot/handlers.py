@@ -13,8 +13,23 @@ from app.bot.keyboards import (
     BTN_STATS,
     main_menu_kb,
 )
+from app.core.config import get_settings
 from app.core.db import AsyncSessionLocal
 from app.db.models import AccountSettings, CryptoAccount, Order, User
+import httpx
+
+
+async def refresh_account_view(callback: types.CallbackQuery, acc_id: int) -> None:
+    # Re-render account menu by reusing selection logic.
+    await on_account_selected(
+        types.CallbackQuery(
+            id=callback.id,
+            from_user=callback.from_user,
+            chat_instance=callback.chat_instance,
+            data=f"acc:{acc_id}",
+            message=callback.message,
+        )
+    )
 
 router = Router()
 
@@ -27,6 +42,10 @@ class AddAccount(StatesGroup):
 class FilterAmount(StatesGroup):
     waiting_min = State()
     waiting_max = State()
+
+
+class EditAssets(StatesGroup):
+    waiting_fiat = State()
 
 
 async def _get_or_create_user(session, from_user: types.User) -> User:
@@ -65,7 +84,9 @@ async def start(message: types.Message, state: FSMContext) -> None:
 async def _start_add_account_flow(message: types.Message, state: FSMContext) -> None:
     await state.set_state(AddAccount.waiting_token)
     await message.answer(
-        "Пришли мне <b>access token</b> от твоего P2C/CryptoBot аккаунта.\n\n",
+        "Пришли мне <b>access token</b> от твоего P2C/CryptoBot аккаунта.\n\n"
+        "Я сохраню его и буду использовать для ловли заявок.\n"
+        "Если передумаешь — просто не отправляй токен и напиши /cancel.",
         reply_markup=main_menu_kb,
     )
 
@@ -210,10 +231,27 @@ async def on_account_selected(callback: types.CallbackQuery) -> None:
                 CryptoAccount.id == acc_id, CryptoAccount.user_id == user.id
             )
         )
+        settings = None
+        if account is not None:
+            settings = await session.scalar(
+                select(AccountSettings).where(AccountSettings.account_id == acc_id)
+            )
 
     if account is None:
         await callback.answer("Аккаунт не найден", show_alert=True)
         return
+
+    auto_on = settings.auto_mode if settings else False
+    toggle_text = "🟢 Принимать заявки" if auto_on else "🔴 Не принимать заявки"
+    min_val = settings.min_amount_fiat if settings else None
+    max_val = settings.max_amount_fiat if settings else None
+    fiat_currency = settings.fiat_currency if settings else None
+    filt_parts = []
+    filt_parts.append(f"мин: {min_val}" if min_val is not None else "мин: нет")
+    filt_parts.append(f"макс: {max_val}" if max_val is not None else "макс: нет")
+    filter_text = ", ".join(filt_parts)
+    fiat_text = fiat_currency or "не задана"
+    active_status = "🟢 Активен" if account.is_active else "⚪️ Выключен"
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -225,8 +263,20 @@ async def on_account_selected(callback: types.CallbackQuery) -> None:
             ],
             [
                 InlineKeyboardButton(
-                    text="⚡️ Авто-режим",
+                    text=toggle_text,
                     callback_data=f"accauto:{acc_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💱 Активировать/выключить",
+                    callback_data=f"accact:{acc_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💵 Валюта фиата",
+                    callback_data=f"accfiat:{acc_id}",
                 )
             ],
             [
@@ -245,7 +295,13 @@ async def on_account_selected(callback: types.CallbackQuery) -> None:
     )
 
     await callback.message.edit_text(
-        f"Аккаунт <b>{account.name or account.id}</b>\nЧто хочешь сделать?",
+        f"Аккаунт <b>{account.name or account.id}</b>\n"
+        f"{active_status}\n"
+        f"Фильтр: {filter_text}\n"
+        f"Активен: {'да' if account.is_active else 'нет'}\n"
+        f"Фиат: {fiat_text}\n"
+        f"Принимать заявки: {'да' if auto_on else 'нет'}\n"
+        "Что хочешь сделать?",
         reply_markup=kb,
     )
     await callback.answer()
@@ -408,6 +464,98 @@ async def on_account_delete_confirm(callback: types.CallbackQuery) -> None:
     await _show_accounts_inline(callback.message)
 
 
+@router.callback_query(F.data.startswith("accact:"))
+async def on_account_toggle_active(callback: types.CallbackQuery) -> None:
+    _, acc_id_str = (callback.data or "").split(":", 1)
+    acc_id = int(acc_id_str)
+    from_user = callback.from_user
+
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == from_user.id))
+        if user is None:
+            await callback.answer("Сначала /start", show_alert=True)
+            return
+
+        account = await session.scalar(
+            select(CryptoAccount).where(
+                CryptoAccount.id == acc_id, CryptoAccount.user_id == user.id
+            )
+        )
+        if account is None:
+            await callback.answer("Аккаунт не найден", show_alert=True)
+            return
+
+        account.is_active = not account.is_active
+        await session.commit()
+        status = "активирован" if account.is_active else "выключен"
+
+    await callback.answer(f"Аккаунт {status}.")
+    await refresh_account_view(callback, acc_id)
+
+
+@router.callback_query(F.data.startswith("accfiat:"))
+async def on_account_fiat(callback: types.CallbackQuery, state: FSMContext) -> None:
+    _, acc_id_str = (callback.data or "").split(":", 1)
+    await state.update_data(account_id=int(acc_id_str))
+    await state.set_state(EditAssets.waiting_fiat)
+    await callback.answer()
+    await callback.message.answer(
+        "Введи код фиата (например, RUB или USD) или 0 чтобы сбросить.",
+        reply_markup=main_menu_kb,
+    )
+
+
+@router.message(EditAssets.waiting_fiat)
+async def on_account_fiat_input(message: types.Message, state: FSMContext) -> None:
+    from_user = message.from_user
+    if from_user is None:
+        await message.answer("Не могу определить пользователя.")
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    acc_id = data.get("account_id")
+    if acc_id is None:
+        await message.answer("Не вижу выбранный аккаунт. Начни заново через /accounts.")
+        await state.clear()
+        return
+
+    raw_fiat = (message.text or "").strip().upper()
+    fiat_value = None if raw_fiat in {"0", ""} else raw_fiat
+
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(select(User).where(User.telegram_id == from_user.id))
+        if user is None:
+            await message.answer("Сначала напиши /start.")
+            await state.clear()
+            return
+
+        account = await session.scalar(
+            select(CryptoAccount).where(
+                CryptoAccount.id == acc_id, CryptoAccount.user_id == user.id
+            )
+        )
+        if account is None:
+            await message.answer("Аккаунт не найден. Начни заново через /accounts.")
+            await state.clear()
+            return
+
+        settings = await session.scalar(
+            select(AccountSettings).where(AccountSettings.account_id == acc_id)
+        )
+        if settings is None:
+            settings = AccountSettings(account_id=acc_id)
+            session.add(settings)
+        settings.fiat_currency = fiat_value
+        await session.commit()
+
+    await message.answer(
+        f"Фиат для {account.name or account.id} обновлён: {fiat_value or 'не задан'}",
+        reply_markup=main_menu_kb,
+    )
+    await state.clear()
+
+
 @router.callback_query(F.data.startswith("accauto:"))
 async def on_account_auto_toggle(callback: types.CallbackQuery) -> None:
     _, acc_id_str = (callback.data or "").split(":", 1)
@@ -439,8 +587,5 @@ async def on_account_auto_toggle(callback: types.CallbackQuery) -> None:
         await session.commit()
         new_state = "включен" if settings.auto_mode else "выключен"
 
-    await callback.message.answer(
-        f"Авто-режим для {account.name or account.id} {new_state}.",
-        reply_markup=main_menu_kb,
-    )
-    await callback.answer()
+    await callback.answer(f"Приём заявок {new_state}.")
+    await refresh_account_view(callback, acc_id)
