@@ -25,10 +25,10 @@ class User(Base):
     )
 
     accounts: Mapped[list["CryptoAccount"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
+        back_populates="user", cascade="all, delete-orphan", lazy="selectin"
     )
     orders: Mapped[list["Order"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
+        back_populates="user", cascade="all, delete-orphan", lazy="selectin"
     )
 
 
@@ -50,7 +50,7 @@ class CryptoAccount(Base):
 
     user: Mapped[User] = relationship(back_populates="accounts")
     settings: Mapped["AccountSettings"] = relationship(
-        back_populates="account", uselist=False, cascade="all, delete-orphan"
+        back_populates="account", uselist=False, cascade="all, delete-orphan", lazy="selectin"
     )
 
 

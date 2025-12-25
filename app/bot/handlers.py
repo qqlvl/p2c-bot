@@ -303,9 +303,11 @@ async def on_filter_amount_input(message: types.Message, state: FSMContext) -> N
             await state.clear()
             return
 
-        settings = account.settings
+        settings = await session.scalar(
+            select(AccountSettings).where(AccountSettings.account_id == acc_id)
+        )
         if settings is None:
-            settings = AccountSettings(account=account)
+            settings = AccountSettings(account_id=acc_id)
             session.add(settings)
         settings.min_amount_fiat = amount
         await session.commit()
