@@ -210,7 +210,7 @@ async def receive_account_name(message: types.Message, state: FSMContext) -> Non
     await state.clear()
     await message.answer(
         f"✅ Аккаунт {account_name} подключён.\n\n"
-        "Теперь я смогу использовать его, чтобы получать откупы.",
+        "Теперь я смогу использовать его, чтобы ловить QR.",
         reply_markup=main_menu_kb,
     )
 
