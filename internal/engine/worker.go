@@ -85,18 +85,29 @@ func (w *Worker) pollOnce(t time.Time) {
 	}
 
 	payments, err := w.client.ListPayments(context.Background(), p2c.ListPaymentsParams{
-		Size:   5,
-		Status: p2c.StatusProcessing,
+		Size: 5,
+		// статус не фильтруем, смотрим все и логируем
 	})
 	if err != nil {
 		log.Printf("[worker %d] poll error: %v", w.cfg.AccountID, err)
 		return
 	}
 	if len(payments.Data) == 0 {
+		log.Printf("[worker %d] poll: empty", w.cfg.AccountID)
 		return
 	}
 
 	for _, p := range payments.Data {
+		log.Printf(
+			"[worker %d] seen payment id=%s status=%s amount=%s %s",
+			w.cfg.AccountID, p.ID, p.Status, p.AmountFiat, p.Fiat,
+		)
+
+		// пропускаем явно завершенные/отмененные
+		if p.Status == p2c.StatusCompleted || p.Status == p2c.StatusDisputed || p.Status == p2c.StatusCanceled || p.Status == p2c.StatusRefunded {
+			continue
+		}
+
 		amountFiat := p.AmountFiatValue()
 		if w.cfg.MinAmount != nil && amountFiat < *w.cfg.MinAmount {
 			log.Printf("[worker %d] skip %s: below min %.2f < %.2f", w.cfg.AccountID, p.ID, amountFiat, *w.cfg.MinAmount)
@@ -116,6 +127,7 @@ func (w *Worker) pollOnce(t time.Time) {
 
 		w.hasActive = true
 		w.activeUntil = time.Now().Add(30 * time.Second)
+		log.Printf("[worker %d] took payment %s amount=%.2f %s", w.cfg.AccountID, p.ID, amountFiat, p.Fiat)
 		w.sendTelegram(buildMessage(p, true, ""))
 		break // берем по одной
 	}
