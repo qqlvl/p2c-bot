@@ -100,7 +100,7 @@ func (w *Worker) pollOnce(t time.Time) {
 	for _, p := range payments.Data {
 		log.Printf(
 			"[worker %d] seen payment id=%s status=%s amount=%s %s",
-			w.cfg.AccountID, p.ID, p.Status, p.AmountFiat, p.Fiat,
+			w.cfg.AccountID, p.IDString(), p.Status, p.AmountFiat, p.Fiat,
 		)
 
 		// пропускаем явно завершенные/отмененные
@@ -118,16 +118,16 @@ func (w *Worker) pollOnce(t time.Time) {
 			continue
 		}
 
-		log.Printf("[worker %d] trying take payment %s amount=%.2f %s", w.cfg.AccountID, p.ID, amountFiat, p.Fiat)
-		if err := w.client.TakePayment(context.Background(), p.ID); err != nil {
-			log.Printf("[worker %d] take payment %s error: %v", w.cfg.AccountID, p.ID, err)
+		log.Printf("[worker %d] trying take payment %s amount=%.2f %s", w.cfg.AccountID, p.IDString(), amountFiat, p.Fiat)
+		if err := w.client.TakePayment(context.Background(), p.IDString()); err != nil {
+			log.Printf("[worker %d] take payment %s error: %v", w.cfg.AccountID, p.IDString(), err)
 			w.sendTelegram(buildMessage(p, false, err.Error()))
 			continue
 		}
 
 		w.hasActive = true
 		w.activeUntil = time.Now().Add(30 * time.Second)
-		log.Printf("[worker %d] took payment %s amount=%.2f %s", w.cfg.AccountID, p.ID, amountFiat, p.Fiat)
+		log.Printf("[worker %d] took payment %s amount=%.2f %s", w.cfg.AccountID, p.IDString(), amountFiat, p.Fiat)
 		w.sendTelegram(buildMessage(p, true, ""))
 		break // берем по одной
 	}

@@ -20,17 +20,20 @@ const (
 )
 
 type Payment struct {
-	ID           string        `json:"id"`
+	ID           json.Number   `json:"id"`
 	Asset        string        `json:"out_asset"`
 	Amount       string        `json:"out_amount"`
 	AmountFiat   string        `json:"in_amount"`
 	Fiat         string        `json:"in_asset"`
 	ExchangeRate string        `json:"exchange_rate"`
 	RewardAmount string        `json:"reward_amount"`
+	RewardPercent float64      `json:"reward_percent,omitempty"`
 	URL          string        `json:"url"`
 	BrandName    string        `json:"brand_name"`
 	Status       PaymentStatus `json:"status"`
 	Processing   string        `json:"processing_at"`
+	CompletedAt  string        `json:"completed_at,omitempty"`
+	IsUnlocked   bool          `json:"is_unlocked,omitempty"`
 }
 
 func (p Payment) AmountFiatValue() float64 {
@@ -39,6 +42,10 @@ func (p Payment) AmountFiatValue() float64 {
 		return 0
 	}
 	return val
+}
+
+func (p Payment) IDString() string {
+	return p.ID.String()
 }
 
 type ListPaymentsParams struct {

@@ -27,6 +27,7 @@ func formatAmountWei(val string) float64 {
 func buildMessage(p p2c.Payment, success bool, errText string) string {
 	outAmount := formatAmountWei(p.Amount)
 	reward := formatAmountWei(p.RewardAmount)
+	idStr := p.IDString()
 
 	var sb strings.Builder
 	if success {
@@ -43,7 +44,7 @@ func buildMessage(p p2c.Payment, success bool, errText string) string {
 	if p.URL != "" {
 		sb.WriteString(fmt.Sprintf("QR: %s\n", p.URL))
 	}
-	sb.WriteString(fmt.Sprintf("ID: %s\n", p.ID))
+	sb.WriteString(fmt.Sprintf("ID: %s\n", idStr))
 	if !success && errText != "" {
 		sb.WriteString(fmt.Sprintf("Ошибка: %s\n", errText))
 	}
