@@ -29,15 +29,33 @@ func (m *Manager) ReloadAccount(cfg WorkerConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Если выключен аккаунт или авто-режим, гасим воркер и выходим.
+	if !cfg.Active || !cfg.AutoMode {
+		if w, ok := m.workers[cfg.AccountID]; ok {
+			log.Printf("[mgr] stop account=%d active=%v auto=%v", cfg.AccountID, cfg.Active, cfg.AutoMode)
+			w.Stop()
+			delete(m.workers, cfg.AccountID)
+		}
+		return
+	}
+
+	// Перезапускаем с новыми настройками.
 	if w, ok := m.workers[cfg.AccountID]; ok {
 		w.Stop()
 	}
 
-	// Build a per-account client with provided token.
 	client := p2c.NewClient(m.client.BaseURL(), cfg.AccessToken)
 	w := NewWorker(cfg, client, m.botToken)
 	m.workers[cfg.AccountID] = w
+	log.Printf("[mgr] reload account=%d active=%v auto=%v min=%.2f max=%.2f chat=%d", cfg.AccountID, cfg.Active, cfg.AutoMode, deref(cfg.MinAmount), deref(cfg.MaxAmount), cfg.ChatID)
 	w.Start()
+}
+
+func deref(v *float64) float64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 // StopAll stops all workers.

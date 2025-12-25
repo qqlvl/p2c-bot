@@ -49,6 +49,7 @@ func (w *Worker) Start() {
 		// Стартуем частый тикер, но дополнительно ограничиваем по окну 5 минут.
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
+		log.Printf("[worker %d] start (active=%v auto=%v)", w.cfg.AccountID, w.cfg.Active, w.cfg.AutoMode)
 		for {
 			select {
 			case <-w.stopCh:
