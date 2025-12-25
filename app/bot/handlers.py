@@ -329,7 +329,8 @@ async def on_account_selected(callback: types.CallbackQuery) -> None:
         "Что хочешь сделать?",
         reply_markup=kb,
     )
-    await callback.answer()
+    if getattr(callback, "bot", None):
+        await callback.answer()
 
 
 @router.callback_query(F.data == "acc_back")
