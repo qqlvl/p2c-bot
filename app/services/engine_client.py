@@ -37,10 +37,12 @@ class P2CEngineClient:
             payload["min_amount"] = min_amount
         if max_amount is not None:
             payload["max_amount"] = max_amount
-        if auto_mode is not None:
-            payload["auto_mode"] = auto_mode
-        if is_active is not None:
-            payload["is_active"] = is_active
+        if auto_mode is None:
+            auto_mode = True
+        if is_active is None:
+            is_active = True
+        payload["auto_mode"] = auto_mode
+        payload["is_active"] = is_active
         async with httpx.AsyncClient(timeout=2.0) as client:
             try:
                 resp = await client.post(url, json=payload)

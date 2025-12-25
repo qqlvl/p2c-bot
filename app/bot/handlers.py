@@ -242,6 +242,15 @@ async def receive_account_name(message: types.Message, state: FSMContext) -> Non
         "Теперь я смогу использовать его, чтобы ловить QR.",
         reply_markup=main_menu_kb,
     )
+    await _engine_reload(
+        account.id,
+        account.access_token_enc,
+        chat_id=account.notification_chat_id,
+        min_amount=None,
+        max_amount=None,
+        auto_mode=True,
+        is_active=account.is_active,
+    )
 
 
 @router.message(Command("my_accounts"))
@@ -447,7 +456,7 @@ async def on_filter_amount_max(message: types.Message, state: FSMContext) -> Non
         chat_id=account.notification_chat_id,
         min_amount=min_val,
         max_amount=max_val,
-        auto_mode=settings.auto_mode if settings else None,
+        auto_mode=settings.auto_mode if settings is not None else True,
         is_active=account.is_active,
     )
 
@@ -541,7 +550,7 @@ async def on_account_toggle_active(callback: types.CallbackQuery) -> None:
         chat_id=account.notification_chat_id,
         min_amount=settings.min_amount_fiat if settings else None,
         max_amount=settings.max_amount_fiat if settings else None,
-        auto_mode=settings.auto_mode if settings else None,
+        auto_mode=settings.auto_mode if settings else True,
         is_active=account.is_active,
     )
 
@@ -587,6 +596,6 @@ async def on_account_auto_toggle(callback: types.CallbackQuery) -> None:
         chat_id=account.notification_chat_id,
         min_amount=settings.min_amount_fiat if settings else None,
         max_amount=settings.max_amount_fiat if settings else None,
-        auto_mode=settings.auto_mode if settings else None,
+        auto_mode=settings.auto_mode if settings else True,
         is_active=account.is_active,
     )

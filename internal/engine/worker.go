@@ -17,6 +17,9 @@ type Worker struct {
 	botToken    string
 	hasActive   bool
 	activeUntil time.Time
+	cursor      string
+	seen        map[string]time.Time
+	reqHistory  []time.Time
 }
 
 type WorkerConfig struct {
@@ -36,14 +39,15 @@ func NewWorker(cfg WorkerConfig, client *p2c.Client, botToken string) *Worker {
 		doneCh:   make(chan struct{}),
 		client:   client,
 		botToken: botToken,
+		seen:     make(map[string]time.Time),
 	}
 }
 
 func (w *Worker) Start() {
 	go func() {
 		defer close(w.doneCh)
-		// Опрашиваем не чаще, чем ~2 сек, чтобы укладываться в лимит ~40 запросов/мин.
-		ticker := time.NewTicker(2 * time.Second)
+		// Стартуем частый тикер, но дополнительно ограничиваем по окну 5 минут.
+		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
@@ -76,6 +80,11 @@ func (w *Worker) pollOnce(t time.Time) {
 		return
 	}
 
+	if !w.allowRequest(t) {
+		log.Printf("[worker %d] poll skipped: rate limit window", w.cfg.AccountID)
+		return
+	}
+
 	// release active lock after 30s to avoid perma-block
 	if w.hasActive && time.Now().After(w.activeUntil) {
 		w.hasActive = false
@@ -85,7 +94,9 @@ func (w *Worker) pollOnce(t time.Time) {
 	}
 
 	payments, err := w.client.ListPayments(context.Background(), p2c.ListPaymentsParams{
-		Size: 5,
+		Size:   10,
+		Status: p2c.StatusProcessing,
+		Cursor: w.cursor,
 		// статус не фильтруем, смотрим все и логируем
 	})
 	if err != nil {
@@ -97,7 +108,19 @@ func (w *Worker) pollOnce(t time.Time) {
 		return
 	}
 
+	if payments.Cursor != "" {
+		w.cursor = payments.Cursor
+	}
+
+	now := time.Now()
+	w.evictSeen(now)
+
 	for _, p := range payments.Data {
+		if _, ok := w.seen[p.IDString()]; ok {
+			continue
+		}
+		w.seen[p.IDString()] = now
+
 		log.Printf(
 			"[worker %d] seen payment id=%s status=%s amount=%s %s",
 			w.cfg.AccountID, p.IDString(), p.Status, p.AmountFiat, p.Fiat,
@@ -138,4 +161,39 @@ func (w *Worker) sendTelegram(text string) {
 		return
 	}
 	_ = sendMessage(w.botToken, w.cfg.ChatID, text)
+}
+
+func (w *Worker) evictSeen(now time.Time) {
+	ttl := 10 * time.Minute
+	for id, ts := range w.seen {
+		if now.Sub(ts) > ttl {
+			delete(w.seen, id)
+		}
+	}
+}
+
+// allowRequest делает простое скользящее окно 5 минут для запросов к API, чтобы не превысить порог.
+func (w *Worker) allowRequest(now time.Time) bool {
+	window := 5 * time.Minute
+	limit := 180 // чуть ниже 200 за 5 минут
+
+	// очистка окна
+	idx := 0
+	for _, ts := range w.reqHistory {
+		if now.Sub(ts) <= window {
+			break
+		}
+		idx++
+	}
+	if idx > 0 && idx < len(w.reqHistory) {
+		w.reqHistory = w.reqHistory[idx:]
+	} else if idx >= len(w.reqHistory) {
+		w.reqHistory = w.reqHistory[:0]
+	}
+
+	if len(w.reqHistory) >= limit {
+		return false
+	}
+	w.reqHistory = append(w.reqHistory, now)
+	return true
 }
