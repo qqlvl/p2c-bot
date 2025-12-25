@@ -22,6 +22,10 @@ func NewClient(baseURL, accessToken string) *Client {
 	}
 }
 
+func (c *Client) BaseURL() string {
+	return c.baseURL
+}
+
 func (c *Client) newRequest(method, path string, body []byte) (*fasthttp.Request, *fasthttp.Response) {
 	req := fasthttp.AcquireRequest()
 	resp := fasthttp.AcquireResponse()

@@ -23,7 +23,7 @@ func NewManager(client *p2c.Client) *Manager {
 }
 
 // ReloadAccount ensures a worker exists and restarts it with fresh settings (stub).
-func (m *Manager) ReloadAccount(accountID int64) {
+func (m *Manager) ReloadAccount(accountID int64, accessToken string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -31,7 +31,8 @@ func (m *Manager) ReloadAccount(accountID int64) {
 		w.Stop()
 	}
 
-	w := NewWorker(accountID, m.client)
+	// Build a per-account client with provided token.
+	w := NewWorker(accountID, p2c.NewClient(m.client.BaseURL(), accessToken))
 	m.workers[accountID] = w
 	w.Start()
 }
@@ -54,7 +55,7 @@ func (m *Manager) TakeOrder(ctx context.Context, accountID int64, externalID str
 	m.mu.Unlock()
 	if !ok {
 		// If worker is absent, start it lazily.
-		m.ReloadAccount(accountID)
+		m.ReloadAccount(accountID, "")
 		m.mu.Lock()
 		w = m.workers[accountID]
 		m.mu.Unlock()

@@ -54,13 +54,14 @@ func (s *Server) handleReloadAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		AccountID int64 `json:"account_id"`
+		AccountID    int64  `json:"account_id"`
+		AccessToken  string `json:"access_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.AccountID == 0 {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	s.mgr.ReloadAccount(req.AccountID)
+	s.mgr.ReloadAccount(req.AccountID, req.AccessToken)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "reloaded"})
 }
 

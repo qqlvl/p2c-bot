@@ -15,13 +15,16 @@ class P2CEngineClient:
             return ""
         return f"{self.base_url}{path}"
 
-    async def reload_account(self, account_id: int) -> bool:
+    async def reload_account(self, account_id: int, access_token: str | None = None) -> bool:
         url = self._build_url("/accounts/reload")
         if not url:
             return False
+        payload: dict[str, object] = {"account_id": account_id}
+        if access_token:
+            payload["access_token"] = access_token
         async with httpx.AsyncClient(timeout=2.0) as client:
             try:
-                resp = await client.post(url, json={"account_id": account_id})
+                resp = await client.post(url, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
                 return bool(data.get("ok", True))
