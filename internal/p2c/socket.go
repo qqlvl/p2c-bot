@@ -53,6 +53,11 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 
 	msgCount := 0
 	inited := false
+	// Пытаемся инициализировать сразу после коннекта
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(`42["list:initialize"]`)); err == nil {
+		log.Printf("ws send init immediately")
+		inited = true
+	}
 
 	for {
 		select {
@@ -79,6 +84,7 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 				if err := conn.WriteMessage(websocket.TextMessage, []byte(`42["list:initialize"]`)); err != nil {
 					return err
 				}
+				log.Printf("ws send init on 40")
 				inited = true
 				continue
 			}
