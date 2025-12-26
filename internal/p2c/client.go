@@ -65,3 +65,19 @@ func (c *Client) TakeLivePayment(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// CompletePayment confirms payment.
+func (c *Client) CompletePayment(ctx context.Context, id string, method string) error {
+	body := []byte(fmt.Sprintf(`{"method":"%s"}`, method))
+	req, resp := c.newRequest(http.MethodPost, fmt.Sprintf("/p2c/payments/%s/complete", id), body)
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+
+	if err := c.do(ctx, req, resp); err != nil {
+		return err
+	}
+	if !c.statusOK(resp) {
+		return fmt.Errorf("complete payment status %d body=%s", resp.StatusCode(), string(resp.Body()))
+	}
+	return nil
+}

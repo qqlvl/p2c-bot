@@ -26,6 +26,7 @@ func New(addr string, mgr *engine.Manager) *Server {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/accounts/reload", s.handleReloadAccount)
 	mux.HandleFunc("/orders/take", s.handleTakeOrder)
+	mux.HandleFunc("/orders/complete", s.handleComplete)
 
 	s.srv = &http.Server{
 		Addr:         addr,
@@ -61,6 +62,7 @@ func (s *Server) handleReloadAccount(w http.ResponseWriter, r *http.Request) {
 		MaxAmount   *float64 `json:"max_amount"`
 		AutoMode    *bool    `json:"auto_mode"`
 		IsActive    *bool    `json:"is_active"`
+		P2CAccountID string  `json:"p2c_account_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.AccountID == 0 {
 		w.WriteHeader(http.StatusBadRequest)
@@ -74,6 +76,7 @@ func (s *Server) handleReloadAccount(w http.ResponseWriter, r *http.Request) {
 		MaxAmount:   req.MaxAmount,
 		AutoMode:    req.AutoMode != nil && *req.AutoMode,
 		Active:      req.IsActive == nil || *req.IsActive,
+		P2CAccountID: req.P2CAccountID,
 	}
 	s.mgr.ReloadAccount(cfg)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "reloaded", "ok": true})
@@ -94,6 +97,28 @@ func (s *Server) handleTakeOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.mgr.TakeOrder(r.Context(), req.AccountID, req.OrderExternalID); err != nil {
 		log.Printf("take order error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"status": "error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleComplete marks payment as completed (manual confirm).
+func (s *Server) handleComplete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		AccountID  int64  `json:"account_id"`
+		PaymentID  string `json:"payment_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.AccountID == 0 || req.PaymentID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if err := s.mgr.CompletePayment(r.Context(), req.AccountID, req.PaymentID); err != nil {
+		log.Printf("complete payment error: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"status": "error"})
 		return
 	}

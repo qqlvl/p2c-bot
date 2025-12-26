@@ -22,6 +22,7 @@ type Worker struct {
 	seen        map[string]time.Time
 	reqHistory  []time.Time
 	cancel      context.CancelFunc
+	p2cAccountID string
 }
 
 type WorkerConfig struct {
@@ -32,6 +33,7 @@ type WorkerConfig struct {
 	MaxAmount   *float64
 	AutoMode    bool
 	Active      bool
+	P2CAccountID string
 }
 
 func NewWorker(cfg WorkerConfig, client *p2c.Client, botToken string) *Worker {
@@ -42,6 +44,7 @@ func NewWorker(cfg WorkerConfig, client *p2c.Client, botToken string) *Worker {
 		client:   client,
 		botToken: botToken,
 		seen:     make(map[string]time.Time),
+		p2cAccountID: cfg.P2CAccountID,
 	}
 }
 
@@ -83,6 +86,16 @@ func (w *Worker) TakeOrder(_ context.Context, externalID string) error {
 	return nil
 }
 
+// CompletePayment confirms payment in manual mode.
+func (w *Worker) CompletePayment(ctx context.Context, paymentID string) error {
+	if w.p2cAccountID == "" {
+		return fmt.Errorf("no p2c account id configured")
+	}
+	if err := w.client.CompletePayment(ctx, paymentID, w.p2cAccountID); err != nil {
+		return err
+	}
+	return nil
+}
 func (w *Worker) pollOnce(t time.Time) {
 	if w.client == nil {
 		return
@@ -172,7 +185,7 @@ func (w *Worker) sendTelegram(text string) {
 	}
 }
 
-func (w *Worker) sendTelegramPhoto(photoURL, caption string) error {
+func (w *Worker) sendTelegramPhoto(photoURL, caption string, markup map[string]any) error {
 	if w.botToken == "" {
 		log.Printf("[worker %d] skip tg send: empty bot token", w.cfg.AccountID)
 		return fmt.Errorf("empty bot token")
@@ -181,7 +194,7 @@ func (w *Worker) sendTelegramPhoto(photoURL, caption string) error {
 		log.Printf("[worker %d] skip tg send: chat_id=0", w.cfg.AccountID)
 		return fmt.Errorf("empty chat")
 	}
-	return sendPhoto(w.botToken, w.cfg.ChatID, photoURL, caption)
+	return sendPhoto(w.botToken, w.cfg.ChatID, photoURL, caption, markup)
 }
 
 func (w *Worker) evictSeen(now time.Time) {
@@ -236,7 +249,7 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	status := "🤖 Заявка принята автоматически ✅"
 	qrURL := fmt.Sprintf("https://quickchart.io/qr?text=%s&size=300", urlEncode(p.URL))
 	caption := buildLiveCaption(p, status)
-	if err := w.sendTelegramPhoto(qrURL, caption); err != nil {
+	if err := w.sendTelegramPhoto(qrURL, caption, buildPaidKeyboard(w.cfg.AccountID, p)); err != nil {
 		log.Printf("[worker %d] telegram photo error: %v", w.cfg.AccountID, err)
 		w.sendTelegram(caption)
 	}

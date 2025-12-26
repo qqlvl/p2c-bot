@@ -73,8 +73,8 @@ func sendMessage(botToken string, chatID int64, text string) error {
 	return nil
 }
 
-// sendPhoto sends a photo by URL with caption.
-func sendPhoto(botToken string, chatID int64, photoURL, caption string) error {
+// sendPhoto sends a photo by URL with caption and optional reply_markup.
+func sendPhoto(botToken string, chatID int64, photoURL, caption string, markup map[string]any) error {
 	body := map[string]any{
 		"chat_id": chatID,
 		"photo":   photoURL,
@@ -82,6 +82,9 @@ func sendPhoto(botToken string, chatID int64, photoURL, caption string) error {
 	if caption != "" {
 		body["caption"] = caption
 		body["parse_mode"] = "HTML"
+	}
+	if markup != nil {
+		body["reply_markup"] = markup
 	}
 	data, _ := json.Marshal(body)
 	resp, err := http.Post(
@@ -105,11 +108,38 @@ func buildLiveCaption(p p2c.LivePayment, status string) string {
 	if status != "" {
 		sb.WriteString(status + "\n")
 	}
+	sb.WriteString(fmt.Sprintf("ID: %s\n", p.ID))
+	reward := formatAmountWei(p.FeeAmount)
+	outAsset := p.OutAsset
+	if outAsset == "" {
+		outAsset = "USDT"
+	}
+
 	sb.WriteString(fmt.Sprintf("Бренд: %s\n", p.BrandName))
 	sb.WriteString(fmt.Sprintf("Сумма: %s %s\n", p.InAmount, p.InAsset))
 	sb.WriteString(fmt.Sprintf("Курс: %s\n", p.ExchangeRate))
-	sb.WriteString(fmt.Sprintf("Вознаграждение: %s\n", p.FeeAmount))
-	sb.WriteString(fmt.Sprintf("Провайдер: %s\n", p.Provider))
-	sb.WriteString(fmt.Sprintf("QR: %s", p.URL))
+	sb.WriteString(fmt.Sprintf("Вознаграждение: %.4f %s\n", reward, outAsset))
 	return sb.String()
+}
+
+// buildPaidKeyboard builds inline keyboard with callback payload carrying account/payment and amounts.
+func buildPaidKeyboard(accID int64, p p2c.LivePayment) map[string]any {
+	if p.ID == "" || accID == 0 {
+		return nil
+	}
+	// payload: paid:<acc>:<payID>:<amount>:<rate>:<fee>
+	payload := fmt.Sprintf(
+		"paid:%d:%s:%s:%s:%s",
+		accID, p.ID, p.InAmount, p.ExchangeRate, p.FeeAmount,
+	)
+	return map[string]any{
+		"inline_keyboard": [][]map[string]string{
+			{
+				{
+					"text":         "✅ Я оплатил",
+					"callback_data": payload,
+				},
+			},
+		},
+	}
 }

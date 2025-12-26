@@ -83,3 +83,17 @@ func (m *Manager) TakeOrder(ctx context.Context, accountID int64, externalID str
 	}
 	return w.TakeOrder(ctx, externalID)
 }
+
+// CompletePayment delegates completion to worker.
+func (m *Manager) CompletePayment(ctx context.Context, accountID int64, paymentID string) error {
+	m.mu.Lock()
+	w, ok := m.workers[accountID]
+	m.mu.Unlock()
+	if !ok {
+		m.ReloadAccount(WorkerConfig{AccountID: accountID})
+		m.mu.Lock()
+		w = m.workers[accountID]
+		m.mu.Unlock()
+	}
+	return w.CompletePayment(ctx, paymentID)
+}

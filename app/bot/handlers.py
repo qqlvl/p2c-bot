@@ -6,7 +6,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.exceptions import TelegramBadRequest
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
+from datetime import datetime
 
 from app.bot.keyboards import (
     BTN_ADD_ACCOUNT,
@@ -42,6 +43,7 @@ async def _engine_reload(
     max_amount: float | None = None,
     auto_mode: bool | None = None,
     is_active: bool | None = None,
+    p2c_account_id: str | None = None,
 ) -> None:
     if min_amount is not None:
         min_amount = float(min_amount)
@@ -55,9 +57,67 @@ async def _engine_reload(
         max_amount=max_amount,
         auto_mode=auto_mode,
         is_active=is_active,
+        p2c_account_id=p2c_account_id,
     )
 
 router = Router()
+
+# ... existing handlers ...
+
+
+@router.callback_query(F.data.startswith("paid:"))
+async def on_paid(callback: types.CallbackQuery) -> None:
+    """Подтверждение оплаты по кнопке из уведомления."""
+    parts = (callback.data or "").split(":")
+    # expected: paid:<acc_id>:<payment_id>:<amount>:<rate>:<fee>
+    if len(parts) < 6:
+        await callback.answer("Не распознал данные платежа", show_alert=True)
+        return
+    try:
+        acc_id = int(parts[1])
+        payment_id = parts[2]
+        amount = float(parts[3])
+        rate = float(parts[4])
+        fee = float(parts[5])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка данных платежа", show_alert=True)
+        return
+
+    # Пытаемся подтвердить на движке/P2C
+    ok = await engine_client.complete_order(acc_id, payment_id)
+    if not ok:
+        await callback.answer("Не удалось подтвердить оплату на стороне P2C", show_alert=True)
+        return
+
+    async with AsyncSessionLocal() as session:
+        account = await session.scalar(
+            select(CryptoAccount).where(CryptoAccount.id == acc_id)
+        )
+        if account is None:
+            await callback.answer("Аккаунт не найден", show_alert=True)
+            return
+        user_id = account.user_id
+        # Пишем в существующую таблицу orders (простая схема: id, user_id, status, amount, created_at)
+        try:
+            await session.execute(
+                text(
+                    "INSERT INTO orders (user_id, status, amount, created_at) "
+                    "VALUES (:user_id, :status, :amount, :created_at)"
+                ),
+                {
+                    "user_id": user_id,
+                    "status": "paid",
+                    "amount": amount,
+                    "created_at": datetime.utcnow(),
+                },
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            # Даже если запись не удалась, ответим пользователю
+        await callback.answer("✅ Отметил как оплачено.", show_alert=False)
+
+    # При желании можно логировать в будущем rate/fee/payment_id
 
 
 class AddAccount(StatesGroup):

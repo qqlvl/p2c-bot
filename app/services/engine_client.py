@@ -24,6 +24,7 @@ class P2CEngineClient:
         max_amount: float | None = None,
         auto_mode: bool | None = None,
         is_active: bool | None = None,
+        p2c_account_id: str | None = None,
     ) -> bool:
         url = self._build_url("/accounts/reload")
         if not url:
@@ -43,6 +44,8 @@ class P2CEngineClient:
             is_active = True
         payload["auto_mode"] = auto_mode
         payload["is_active"] = is_active
+        if p2c_account_id:
+            payload["p2c_account_id"] = p2c_account_id
         async with httpx.AsyncClient(timeout=2.0) as client:
             try:
                 resp = await client.post(url, json=payload)
@@ -60,6 +63,20 @@ class P2CEngineClient:
             "account_id": account_id,
             "order_external_id": order_external_id,
         }
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            try:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                return bool(data.get("ok", True))
+            except httpx.HTTPError:
+                return False
+
+    async def complete_order(self, account_id: int, payment_id: str) -> bool:
+        url = self._build_url("/orders/complete")
+        if not url:
+            return False
+        payload = {"account_id": account_id, "payment_id": payment_id}
         async with httpx.AsyncClient(timeout=2.0) as client:
             try:
                 resp = await client.post(url, json=payload)
