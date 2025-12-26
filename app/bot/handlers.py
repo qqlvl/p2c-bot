@@ -20,6 +20,7 @@ from app.core.db import AsyncSessionLocal
 from app.db.models import AccountSettings, CryptoAccount, Order, User
 from app.services.engine_client import engine_client
 import httpx
+from sqlalchemy.exc import SQLAlchemyError
 
 
 async def refresh_account_view(callback: types.CallbackQuery, acc_id: int) -> None:
@@ -147,6 +148,60 @@ async def _get_or_create_user(session, from_user: types.User) -> User:
         user.username = from_user.username
         user.first_name = from_user.first_name
     return user
+
+
+async def _ensure_p2c_account_map_table(session) -> None:
+    await session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS p2c_account_map (
+                account_id INTEGER PRIMARY KEY,
+                p2c_account_id TEXT
+            )
+            """
+        )
+    )
+
+
+async def _get_or_fetch_p2c_account_id(
+    session, account_id: int, access_token: str
+) -> str | None:
+    await _ensure_p2c_account_map_table(session)
+    res = await session.execute(
+        text(
+            "SELECT p2c_account_id FROM p2c_account_map WHERE account_id = :account_id"
+        ),
+        {"account_id": account_id},
+    )
+    row = res.first()
+    if row and row[0]:
+        return row[0]
+
+    # fetch from P2C
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(
+                "https://app.cr.bot/internal/v1/p2c/accounts",
+                headers={"Cookie": f"access_token={access_token}"},
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data") or []
+            if not data:
+                return None
+            p2c_id = data[0].get("id")
+            if p2c_id:
+                await session.execute(
+                    text(
+                        "INSERT OR REPLACE INTO p2c_account_map (account_id, p2c_account_id) "
+                        "VALUES (:account_id, :p2c_account_id)"
+                    ),
+                    {"account_id": account_id, "p2c_account_id": p2c_id},
+                )
+                await session.commit()
+            return p2c_id
+    except (httpx.HTTPError, SQLAlchemyError):
+        await session.rollback()
+        return None
 
 
 @router.message(CommandStart())
@@ -286,6 +341,8 @@ async def receive_account_name(message: types.Message, state: FSMContext) -> Non
         )
         session.add(account)
         await session.commit()
+        # fetch p2c account id
+        p2c_acc_id = await _get_or_fetch_p2c_account_id(session, account.id, account.access_token_enc)
         await _engine_reload(
             account.id,
             account.access_token_enc,
@@ -294,6 +351,7 @@ async def receive_account_name(message: types.Message, state: FSMContext) -> Non
             max_amount=None,
             auto_mode=False,  # не стартуем приём, пока юзер не включит сам
             is_active=account.is_active,
+            p2c_account_id=p2c_acc_id,
         )
 
     await state.clear()
@@ -501,6 +559,8 @@ async def on_filter_amount_max(message: types.Message, state: FSMContext) -> Non
         f"макс: {max_val if max_val is not None else 'нет'}",
         reply_markup=main_menu_kb,
     )
+    async with AsyncSessionLocal() as session:
+        p2c_acc = await _get_or_fetch_p2c_account_id(session, acc_id, account.access_token_enc or "")
     await _engine_reload(
         acc_id,
         account.access_token_enc,
@@ -509,6 +569,7 @@ async def on_filter_amount_max(message: types.Message, state: FSMContext) -> Non
         max_amount=max_val,
         auto_mode=settings.auto_mode if settings is not None else False,
         is_active=account.is_active,
+        p2c_account_id=p2c_acc,
     )
 
 
@@ -595,6 +656,8 @@ async def on_account_toggle_active(callback: types.CallbackQuery) -> None:
 
     await callback.answer(f"Аккаунт {status}.")
     await refresh_account_view(callback, acc_id)
+    async with AsyncSessionLocal() as session:
+        p2c_acc = await _get_or_fetch_p2c_account_id(session, acc_id, account.access_token_enc or "")
     await _engine_reload(
         acc_id,
         account.access_token_enc,
@@ -603,6 +666,7 @@ async def on_account_toggle_active(callback: types.CallbackQuery) -> None:
         max_amount=settings.max_amount_fiat if settings else None,
         auto_mode=settings.auto_mode if settings else False,
         is_active=account.is_active,
+        p2c_account_id=p2c_acc,
     )
 
 
@@ -641,6 +705,8 @@ async def on_account_auto_toggle(callback: types.CallbackQuery) -> None:
 
     await callback.answer(f"Приём заявок {new_state}.")
     await refresh_account_view(callback, acc_id)
+    async with AsyncSessionLocal() as session:
+        p2c_acc = await _get_or_fetch_p2c_account_id(session, acc_id, account.access_token_enc or "")
     await _engine_reload(
         acc_id,
         account.access_token_enc,
@@ -649,4 +715,5 @@ async def on_account_auto_toggle(callback: types.CallbackQuery) -> None:
         max_amount=settings.max_amount_fiat if settings else None,
         auto_mode=settings.auto_mode if settings else False,
         is_active=account.is_active,
+        p2c_account_id=p2c_acc,
     )
