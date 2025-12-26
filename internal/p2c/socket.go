@@ -49,18 +49,13 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 		return fmt.Errorf("dial ws: %w", err)
 	}
 	defer conn.Close()
-	log.Printf("ws connected: %s", wsURL)
-
-	pingTicker := time.NewTicker(pingInterval)
-	defer pingTicker.Stop()
+	log.Printf("ws connected: %s (pingInterval=%s)", wsURL, pingInterval)
 
 	for {
 		select {
 		case <-ctx.Done():
 			_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bye"))
 			return nil
-		case <-pingTicker.C:
-			_ = conn.WriteMessage(websocket.TextMessage, []byte("2"))
 		default:
 			_, msg, err := conn.ReadMessage()
 			if err != nil {
@@ -73,7 +68,8 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 				continue
 			}
 			// Engine.IO messages start with numeric prefix. We care about "42" -> socket.io event
-			if len(s) < 2 || !strings.HasPrefix(s, "42") {
+			if len(s) < 2 || s[0:2] != "42" {
+				log.Printf("ws ctrl: %s", s)
 				continue
 			}
 			payload := []byte(s[2:])
@@ -168,8 +164,13 @@ func eioWebsocket(ctx context.Context, wsURL, accessToken string) (*websocket.Co
 	header.Set("Pragma", "no-cache")
 	header.Set("Cache-Control", "no-cache")
 
-	conn, _, err := dialer.DialContext(ctx, wsURL, header)
+	conn, resp, err := dialer.DialContext(ctx, wsURL, header)
 	if err != nil {
+		if resp != nil {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("bad handshake: %v body=%s", err, string(b))
+		}
 		return nil, err
 	}
 
