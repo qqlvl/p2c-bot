@@ -210,6 +210,11 @@ func eioWebsocket(ctx context.Context, wsURL, accessToken string) (*websocket.Co
 		conn.Close()
 		return nil, err
 	}
+	// Initialize list stream (обязательно, иначе сервер не шлёт list:update).
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(`42["list:initialize"]`)); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	return conn, nil
 }
 
