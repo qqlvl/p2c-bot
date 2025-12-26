@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -179,15 +178,15 @@ func eioWebsocket(ctx context.Context, wsURL, accessToken string) (*websocket.Co
 		conn.Close()
 		return nil, err
 	}
-	_, resp, err := conn.ReadMessage()
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-	if string(resp) != "3probe" {
-		conn.Close()
-		return nil, fmt.Errorf("probe failed: %s", string(resp))
-	}
+		_, respMsg, err := conn.ReadMessage()
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		if string(respMsg) != "3probe" {
+			conn.Close()
+			return nil, fmt.Errorf("probe failed: %s", string(respMsg))
+		}
 	if err := conn.WriteMessage(websocket.TextMessage, []byte("5")); err != nil {
 		conn.Close()
 		return nil, err
