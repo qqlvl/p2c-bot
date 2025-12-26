@@ -53,8 +53,16 @@ func (w *Worker) Start() {
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		w.cancel = cancel
-		if err := p2c.SubscribeSocket(ctx, w.client.BaseURL(), w.cfg.AccessToken, w.handleLivePayment); err != nil {
-			log.Printf("[worker %d] websocket error: %v", w.cfg.AccountID, err)
+		for {
+			if err := p2c.SubscribeSocket(ctx, w.client.BaseURL(), w.cfg.AccessToken, w.handleLivePayment); err != nil {
+				log.Printf("[worker %d] websocket error: %v", w.cfg.AccountID, err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+				log.Printf("[worker %d] reconnecting...", w.cfg.AccountID)
+			}
 		}
 	}()
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -48,6 +49,7 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 		return fmt.Errorf("dial ws: %w", err)
 	}
 	defer conn.Close()
+	log.Printf("ws connected: %s", wsURL)
 
 	pingTicker := time.NewTicker(pingInterval)
 	defer pingTicker.Stop()
