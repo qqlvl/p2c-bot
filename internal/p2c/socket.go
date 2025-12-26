@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -52,12 +51,6 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 	log.Printf("ws connected: %s (pingInterval=%s)", wsURL, pingInterval)
 
 	msgCount := 0
-	inited := false
-	// Пытаемся инициализировать сразу после коннекта
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(`42["list:initialize"]`)); err == nil {
-		log.Printf("ws send init immediately")
-		inited = true
-	}
 
 	for {
 		select {
@@ -77,15 +70,6 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 			// server ping -> answer pong
 			if s == "2" {
 				_ = conn.WriteMessage(websocket.TextMessage, []byte("3"))
-				continue
-			}
-			// сервер может слать 40{...} connect ack — после него отправляем list:initialize
-			if strings.HasPrefix(s, "40") && !inited {
-				if err := conn.WriteMessage(websocket.TextMessage, []byte(`42["list:initialize"]`)); err != nil {
-					return err
-				}
-				log.Printf("ws send init on 40")
-				inited = true
 				continue
 			}
 			// Engine.IO messages start with numeric prefix. We care about "42" -> socket.io event
