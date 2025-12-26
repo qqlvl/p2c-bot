@@ -157,10 +157,17 @@ func (w *Worker) pollOnce(t time.Time) {
 }
 
 func (w *Worker) sendTelegram(text string) {
-	if w.botToken == "" || w.cfg.ChatID == 0 {
+	if w.botToken == "" {
+		log.Printf("[worker %d] skip tg send: empty bot token", w.cfg.AccountID)
 		return
 	}
-	_ = sendMessage(w.botToken, w.cfg.ChatID, text)
+	if w.cfg.ChatID == 0 {
+		log.Printf("[worker %d] skip tg send: chat_id=0", w.cfg.AccountID)
+		return
+	}
+	if err := sendMessage(w.botToken, w.cfg.ChatID, text); err != nil {
+		log.Printf("[worker %d] telegram send error: %v", w.cfg.AccountID, err)
+	}
 }
 
 func (w *Worker) evictSeen(now time.Time) {
@@ -215,5 +222,6 @@ func buildLiveMessage(p p2c.LivePayment) string {
 		fmt.Sprintf("Сумма: %s %s\n", p.InAmount, p.InAsset) +
 		fmt.Sprintf("Курс: %s\n", p.ExchangeRate) +
 		fmt.Sprintf("Вознаграждение: %s\n", p.FeeAmount) +
+		fmt.Sprintf("Провайдер: %s\n", p.Provider) +
 		fmt.Sprintf("QR: %s", p.URL)
 }
