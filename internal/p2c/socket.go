@@ -145,7 +145,7 @@ func eioHandshake(baseURL, accessToken string) (wsURL string, pingInterval time.
 	return u.String(), pi, nil
 }
 
-func eioWebsocket(ctx context.Context, wsURL, accessToken, sid string) (*websocket.Conn, error) {
+func eioWebsocket(ctx context.Context, wsURL, accessToken string) (*websocket.Conn, error) {
 	dialer := websocket.Dialer{
 		Proxy:            http.ProxyFromEnvironment,
 		HandshakeTimeout: 5 * time.Second,
