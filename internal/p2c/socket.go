@@ -7,8 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -39,12 +37,12 @@ type listUpdate struct {
 
 // SubscribeSocket connects to p2c-socket and feeds incoming "op=add" updates via handler.
 func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler func(LivePayment)) error {
-	wsURL, sid, pingInterval, err := eioHandshake(baseURL, accessToken)
+	wsURL, pingInterval, err := eioHandshake(baseURL, accessToken)
 	if err != nil {
 		return fmt.Errorf("handshake: %w", err)
 	}
 
-	conn, err := eioWebsocket(ctx, wsURL, accessToken, sid)
+	conn, err := eioWebsocket(ctx, wsURL, accessToken)
 	if err != nil {
 		return fmt.Errorf("dial ws: %w", err)
 	}
@@ -185,7 +183,7 @@ func eioWebsocket(ctx context.Context, wsURL, accessToken, sid string) (*websock
 		return nil, err
 	}
 	// optional: read next message (may be "40" connect)
-	_, _ = conn.ReadMessage()
+	_, _, _ = conn.ReadMessage()
 	return conn, nil
 }
 
