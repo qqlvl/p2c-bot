@@ -87,13 +87,6 @@ func (w *Worker) pollOnce(t time.Time) {
 	}
 
 	// release active lock after 30s to avoid perma-block
-	if w.hasActive && time.Now().After(w.activeUntil) {
-		w.hasActive = false
-	}
-	if w.hasActive {
-		return
-	}
-
 	payments, err := w.client.ListPayments(context.Background(), p2c.ListPaymentsParams{
 		Size:   10,
 		Status: p2c.StatusProcessing,
@@ -149,8 +142,6 @@ func (w *Worker) pollOnce(t time.Time) {
 			continue
 		}
 
-		w.hasActive = true
-		w.activeUntil = time.Now().Add(30 * time.Second)
 		log.Printf("[worker %d] took payment %s amount=%.2f %s", w.cfg.AccountID, p.IDString(), amountFiat, p.Fiat)
 		w.sendTelegram(buildMessage(p, true, ""))
 		break // берем по одной
