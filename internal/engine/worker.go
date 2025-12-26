@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -15,11 +16,10 @@ type Worker struct {
 	doneCh      chan struct{}
 	client      *p2c.Client
 	botToken    string
-	hasActive   bool
-	activeUntil time.Time
 	cursor      string
 	seen        map[string]time.Time
 	reqHistory  []time.Time
+	cancel      context.CancelFunc
 }
 
 type WorkerConfig struct {
@@ -46,23 +46,23 @@ func NewWorker(cfg WorkerConfig, client *p2c.Client, botToken string) *Worker {
 func (w *Worker) Start() {
 	go func() {
 		defer close(w.doneCh)
-		// Стартуем частый тикер, но дополнительно ограничиваем по окну 5 минут.
-		ticker := time.NewTicker(500 * time.Millisecond)
-		defer ticker.Stop()
 		log.Printf("[worker %d] start (active=%v auto=%v)", w.cfg.AccountID, w.cfg.Active, w.cfg.AutoMode)
-		for {
-			select {
-			case <-w.stopCh:
-				log.Printf("[worker %d] stopped", w.cfg.AccountID)
-				return
-			case t := <-ticker.C:
-				w.pollOnce(t)
-			}
+		if !w.cfg.Active || !w.cfg.AutoMode {
+			log.Printf("[worker %d] stopped (inactive/auto off)", w.cfg.AccountID)
+			return
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		w.cancel = cancel
+		if err := p2c.SubscribeSocket(ctx, w.client.BaseURL(), w.cfg.AccessToken, w.handleLivePayment); err != nil {
+			log.Printf("[worker %d] websocket error: %v", w.cfg.AccountID, err)
 		}
 	}()
 }
 
 func (w *Worker) Stop() {
+	if w.cancel != nil {
+		w.cancel()
+	}
 	close(w.stopCh)
 	<-w.doneCh
 }
@@ -197,4 +197,24 @@ func (w *Worker) allowRequest(now time.Time) bool {
 	}
 	w.reqHistory = append(w.reqHistory, now)
 	return true
+}
+
+func (w *Worker) handleLivePayment(p p2c.LivePayment) {
+	if _, ok := w.seen[p.ID]; ok {
+		return
+	}
+	w.seen[p.ID] = time.Now()
+
+	msg := buildLiveMessage(p)
+	log.Printf("[worker %d] live add id=%s amount=%s rate=%s", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate)
+	w.sendTelegram(msg)
+}
+
+func buildLiveMessage(p p2c.LivePayment) string {
+	return "🆕 Новая заявка\n" +
+		fmt.Sprintf("Бренд: %s\n", p.BrandName) +
+		fmt.Sprintf("Сумма: %s %s\n", p.InAmount, p.InAsset) +
+		fmt.Sprintf("Курс: %s\n", p.ExchangeRate) +
+		fmt.Sprintf("Вознаграждение: %s\n", p.FeeAmount) +
+		fmt.Sprintf("QR: %s", p.URL)
 }
