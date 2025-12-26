@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -63,11 +64,17 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 			if err != nil {
 				return err
 			}
-			// Engine.IO messages start with a numeric prefix. We care about "42" -> socket.io event
-			if len(msg) < 2 || string(msg[:2]) != "42" {
+			s := string(msg)
+			// server ping -> answer pong
+			if s == "2" {
+				_ = conn.WriteMessage(websocket.TextMessage, []byte("3"))
 				continue
 			}
-			payload := msg[2:]
+			// Engine.IO messages start with numeric prefix. We care about "42" -> socket.io event
+			if len(s) < 2 || !strings.HasPrefix(s, "42") {
+				continue
+			}
+			payload := []byte(s[2:])
 			var arr []json.RawMessage
 			if err := json.Unmarshal(payload, &arr); err != nil || len(arr) < 2 {
 				continue
