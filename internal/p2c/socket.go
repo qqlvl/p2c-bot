@@ -85,12 +85,20 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 				continue
 			}
 			for _, u := range updates {
+				log.Printf("ws list:update op=%s id=%s", u.Op, idFrom(u.Data))
 				if u.Op == "add" && u.Data != nil {
 					handler(*u.Data)
 				}
 			}
 		}
 	}
+}
+
+func idFrom(p *LivePayment) string {
+	if p == nil {
+		return ""
+	}
+	return p.ID
 }
 
 func eioHandshake(baseURL, accessToken string) (wsURL string, pingInterval time.Duration, err error) {
