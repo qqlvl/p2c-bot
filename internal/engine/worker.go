@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"net/url"
+	"strings"
 
 	"p2c-engine/internal/p2c"
 )
@@ -170,6 +172,18 @@ func (w *Worker) sendTelegram(text string) {
 	}
 }
 
+func (w *Worker) sendTelegramPhoto(photoURL, caption string) error {
+	if w.botToken == "" {
+		log.Printf("[worker %d] skip tg send: empty bot token", w.cfg.AccountID)
+		return fmt.Errorf("empty bot token")
+	}
+	if w.cfg.ChatID == 0 {
+		log.Printf("[worker %d] skip tg send: chat_id=0", w.cfg.AccountID)
+		return fmt.Errorf("empty chat")
+	}
+	return sendPhoto(w.botToken, w.cfg.ChatID, photoURL, caption)
+}
+
 func (w *Worker) evictSeen(now time.Time) {
 	ttl := 10 * time.Minute
 	for id, ts := range w.seen {
@@ -211,9 +225,27 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	}
 	w.seen[p.ID] = time.Now()
 
-	msg := buildLiveMessage(p)
 	log.Printf("[worker %d] live add id=%s amount=%s rate=%s", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate)
-	w.sendTelegram(msg)
+
+	status := "🆕 Новая заявка"
+	if err := w.client.TakeLivePayment(context.Background(), p.ID); err != nil {
+		log.Printf("[worker %d] take %s error: %v", w.cfg.AccountID, p.ID, err)
+		status = "⚠️ Не удалось принять заявку"
+	} else {
+		status = "🤖 Заявка принята автоматически ✅"
+	}
+
+	// Попробуем отправить QR как картинку через quickchart.io; если не выйдет — текстом.
+	qrURL := fmt.Sprintf("https://quickchart.io/qr?text=%s&size=300", urlEncode(p.URL))
+	caption := buildLiveCaption(p, status)
+	if err := w.sendTelegramPhoto(qrURL, caption); err != nil {
+		log.Printf("[worker %d] telegram photo error: %v", w.cfg.AccountID, err)
+		w.sendTelegram(caption)
+	}
+}
+
+func urlEncode(s string) string {
+	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
 }
 
 func buildLiveMessage(p p2c.LivePayment) string {
