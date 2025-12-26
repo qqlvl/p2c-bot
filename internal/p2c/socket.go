@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -36,38 +39,18 @@ type listUpdate struct {
 
 // SubscribeSocket connects to p2c-socket and feeds incoming "op=add" updates via handler.
 func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler func(LivePayment)) error {
-	u, err := url.Parse(baseURL)
+	wsURL, sid, pingInterval, err := eioHandshake(baseURL, accessToken)
 	if err != nil {
-		return fmt.Errorf("parse baseURL: %w", err)
-	}
-	u.Scheme = "wss"
-	u.Path = "/internal/v1/p2c-socket/"
-	q := u.Query()
-	q.Set("EIO", "4")
-	q.Set("transport", "websocket")
-	u.RawQuery = q.Encode()
-
-	dialer := websocket.Dialer{
-		Proxy:            http.ProxyFromEnvironment,
-		HandshakeTimeout: 5 * time.Second,
-		EnableCompression: true,
+		return fmt.Errorf("handshake: %w", err)
 	}
 
-	header := http.Header{}
-	header.Set("Origin", fmt.Sprintf("%s://%s", "https", u.Host))
-	if accessToken != "" {
-		header.Set("Cookie", fmt.Sprintf("access_token=%s", accessToken))
-	}
-	header.Set("Pragma", "no-cache")
-	header.Set("Cache-Control", "no-cache")
-
-	conn, _, err := dialer.DialContext(ctx, u.String(), header)
+	conn, err := eioWebsocket(ctx, wsURL, accessToken, sid)
 	if err != nil {
-		return err
+		return fmt.Errorf("dial ws: %w", err)
 	}
 	defer conn.Close()
-	// Engine.IO requires sending "2" periodically to keep alive
-	pingTicker := time.NewTicker(20 * time.Second)
+
+	pingTicker := time.NewTicker(pingInterval)
 	defer pingTicker.Stop()
 
 	for {
@@ -76,7 +59,6 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 			_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bye"))
 			return nil
 		case <-pingTicker.C:
-			// send ping "2"
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("2"))
 		default:
 			_, msg, err := conn.ReadMessage()
@@ -107,4 +89,110 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 			}
 		}
 	}
+}
+
+func eioHandshake(baseURL, accessToken string) (wsURL string, pingInterval time.Duration, err error) {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return "", 0, err
+	}
+	u.Scheme = "https"
+	u.Path = "/internal/v1/p2c-socket/"
+	q := u.Query()
+	q.Set("EIO", "4")
+	q.Set("transport", "polling")
+	u.RawQuery = q.Encode()
+
+	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	if accessToken != "" {
+		req.Header.Set("Cookie", fmt.Sprintf("access_token=%s", accessToken))
+	}
+	req.Header.Set("Origin", fmt.Sprintf("%s://%s", "https", u.Host))
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Cache-Control", "no-cache")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) == 0 || body[0] != '0' {
+		return "", 0, fmt.Errorf("unexpected handshake body: %s", string(body))
+	}
+
+	var open struct {
+		SID          string `json:"sid"`
+		PingInterval int64  `json:"pingInterval"`
+		PingTimeout  int64  `json:"pingTimeout"`
+	}
+	if err := json.Unmarshal(body[1:], &open); err != nil {
+		return "", 0, fmt.Errorf("parse open: %w", err)
+	}
+	if open.SID == "" {
+		return "", 0, fmt.Errorf("empty sid")
+	}
+
+	// prepare websocket URL with sid
+	u.Scheme = "wss"
+	q.Set("transport", "websocket")
+	q.Set("sid", open.SID)
+	u.RawQuery = q.Encode()
+
+	pi := time.Duration(open.PingInterval) * time.Millisecond
+	if pi <= 0 {
+		pi = 20 * time.Second
+	}
+	return u.String(), pi, nil
+}
+
+func eioWebsocket(ctx context.Context, wsURL, accessToken, sid string) (*websocket.Conn, error) {
+	dialer := websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: 5 * time.Second,
+		EnableCompression: true,
+	}
+	header := http.Header{}
+	header.Set("Origin", fmt.Sprintf("%s://%s", "https", mustHost(wsURL)))
+	if accessToken != "" {
+		header.Set("Cookie", fmt.Sprintf("access_token=%s", accessToken))
+	}
+	header.Set("Pragma", "no-cache")
+	header.Set("Cache-Control", "no-cache")
+
+	conn, _, err := dialer.DialContext(ctx, wsURL, header)
+	if err != nil {
+		return nil, err
+	}
+
+	// Engine.IO v4: send probe, expect "3probe", then upgrade "5"
+	if err := conn.WriteMessage(websocket.TextMessage, []byte("2probe")); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	_, resp, err := conn.ReadMessage()
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if string(resp) != "3probe" {
+		conn.Close()
+		return nil, fmt.Errorf("probe failed: %s", string(resp))
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, []byte("5")); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	// optional: read next message (may be "40" connect)
+	_, _ = conn.ReadMessage()
+	return conn, nil
+}
+
+func mustHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Host
 }
