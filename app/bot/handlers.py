@@ -232,7 +232,7 @@ async def receive_account_name(message: types.Message, state: FSMContext) -> Non
             chat_id=account.notification_chat_id,
             min_amount=None,
             max_amount=None,
-            auto_mode=None,
+            auto_mode=False,  # не стартуем приём, пока юзер не включит сам
             is_active=account.is_active,
         )
 
@@ -241,15 +241,6 @@ async def receive_account_name(message: types.Message, state: FSMContext) -> Non
         f"✅ Аккаунт {account_name} подключён.\n\n"
         "Теперь я смогу использовать его, чтобы ловить QR.",
         reply_markup=main_menu_kb,
-    )
-    await _engine_reload(
-        account.id,
-        account.access_token_enc,
-        chat_id=account.notification_chat_id,
-        min_amount=None,
-        max_amount=None,
-        auto_mode=True,
-        is_active=account.is_active,
     )
 
 
@@ -456,7 +447,7 @@ async def on_filter_amount_max(message: types.Message, state: FSMContext) -> Non
         chat_id=account.notification_chat_id,
         min_amount=min_val,
         max_amount=max_val,
-        auto_mode=settings.auto_mode if settings is not None else True,
+        auto_mode=settings.auto_mode if settings is not None else False,
         is_active=account.is_active,
     )
 
@@ -511,7 +502,7 @@ async def on_account_delete_confirm(callback: types.CallbackQuery) -> None:
     await callback.message.answer(f"Аккаунт ID {acc_id} удалён.")
     await callback.answer()
     await _show_accounts_inline(callback.message)
-    await _engine_reload(acc_id)
+    await _engine_reload(acc_id, None, auto_mode=False, is_active=False)
 
 
 @router.callback_query(F.data.startswith("accact:"))
@@ -550,7 +541,7 @@ async def on_account_toggle_active(callback: types.CallbackQuery) -> None:
         chat_id=account.notification_chat_id,
         min_amount=settings.min_amount_fiat if settings else None,
         max_amount=settings.max_amount_fiat if settings else None,
-        auto_mode=settings.auto_mode if settings else True,
+        auto_mode=settings.auto_mode if settings else False,
         is_active=account.is_active,
     )
 
@@ -596,6 +587,6 @@ async def on_account_auto_toggle(callback: types.CallbackQuery) -> None:
         chat_id=account.notification_chat_id,
         min_amount=settings.min_amount_fiat if settings else None,
         max_amount=settings.max_amount_fiat if settings else None,
-        auto_mode=settings.auto_mode if settings else True,
+        auto_mode=settings.auto_mode if settings else False,
         is_active=account.is_active,
     )
