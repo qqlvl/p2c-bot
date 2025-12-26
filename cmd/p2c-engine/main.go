@@ -17,7 +17,8 @@ import (
 func main() {
 	addr := getenv("ENGINE_ADDR", ":8080")
 	baseURL := getenv("P2C_BASE_URL", "https://app.cr.bot/internal/v1")
-	botToken := os.Getenv("P2C_BOT_TOKEN")
+	// Prefer dedicated engine token, but fall back to bot token if not provided.
+	botToken := getenv("P2C_BOT_TOKEN", os.Getenv("BOT_TOKEN"))
 
 	p2cClient := p2c.NewClient(baseURL, "")
 	mgr := engine.NewManager(p2cClient, botToken)
