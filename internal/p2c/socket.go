@@ -72,6 +72,14 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 				_ = conn.WriteMessage(websocket.TextMessage, []byte("3"))
 				continue
 			}
+			// connect ack from server -> отправляем list:initialize
+			if strings.HasPrefix(s, "40") {
+				if err := conn.WriteMessage(websocket.TextMessage, []byte(`42["list:initialize"]`)); err != nil {
+					return err
+				}
+				log.Printf("ws send init on 40")
+				continue
+			}
 			// Engine.IO messages start with numeric prefix. We care about "42" -> socket.io event
 			if len(s) < 2 || s[0:2] != "42" {
 				log.Printf("ws ctrl: %s", s)
