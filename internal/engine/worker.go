@@ -227,15 +227,13 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 
 	log.Printf("[worker %d] live add id=%s amount=%s rate=%s", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate)
 
-	status := "🆕 Новая заявка"
 	if err := w.client.TakeLivePayment(context.Background(), p.ID); err != nil {
 		log.Printf("[worker %d] take %s error: %v", w.cfg.AccountID, p.ID, err)
-		status = "⚠️ Не удалось принять заявку"
-	} else {
-		status = "🤖 Заявка принята автоматически ✅"
+		return
 	}
 
-	// Попробуем отправить QR как картинку через quickchart.io; если не выйдет — текстом.
+	// Успешно приняли — отправляем в ТГ.
+	status := "🤖 Заявка принята автоматически ✅"
 	qrURL := fmt.Sprintf("https://quickchart.io/qr?text=%s&size=300", urlEncode(p.URL))
 	caption := buildLiveCaption(p, status)
 	if err := w.sendTelegramPhoto(qrURL, caption); err != nil {

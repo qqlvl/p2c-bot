@@ -61,7 +61,7 @@ func (c *Client) TakeLivePayment(ctx context.Context, id string) error {
 		return err
 	}
 	if !c.statusOK(resp) {
-		return fmt.Errorf("take payment status %d", resp.StatusCode())
+		return fmt.Errorf("take payment status %d body=%s", resp.StatusCode(), string(resp.Body()))
 	}
 	return nil
 }
