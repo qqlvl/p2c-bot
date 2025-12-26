@@ -178,21 +178,24 @@ func eioWebsocket(ctx context.Context, wsURL, accessToken string) (*websocket.Co
 		conn.Close()
 		return nil, err
 	}
-		_, respMsg, err := conn.ReadMessage()
-		if err != nil {
-			conn.Close()
-			return nil, err
-		}
-		if string(respMsg) != "3probe" {
-			conn.Close()
-			return nil, fmt.Errorf("probe failed: %s", string(respMsg))
-		}
+	_, respMsg, err := conn.ReadMessage()
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if string(respMsg) != "3probe" {
+		conn.Close()
+		return nil, fmt.Errorf("probe failed: %s", string(respMsg))
+	}
 	if err := conn.WriteMessage(websocket.TextMessage, []byte("5")); err != nil {
 		conn.Close()
 		return nil, err
 	}
-	// optional: read next message (may be "40" connect)
-	_, _, _ = conn.ReadMessage()
+	// Send connect to default namespace
+	if err := conn.WriteMessage(websocket.TextMessage, []byte("40")); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	return conn, nil
 }
 
