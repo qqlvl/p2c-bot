@@ -7,6 +7,7 @@ import (
 	"time"
 	"net/url"
 	"strings"
+	"encoding/json"
 
 	"p2c-engine/internal/p2c"
 )
@@ -23,6 +24,9 @@ type Worker struct {
 	reqHistory  []time.Time
 	cancel      context.CancelFunc
 	p2cAccountID string
+	penaltyUntil time.Time
+	penaltyReason string
+	takeMap     map[string]int64 // hex -> numeric id
 }
 
 type WorkerConfig struct {
@@ -45,6 +49,7 @@ func NewWorker(cfg WorkerConfig, client *p2c.Client, botToken string) *Worker {
 		botToken: botToken,
 		seen:     make(map[string]time.Time),
 		p2cAccountID: cfg.P2CAccountID,
+		takeMap:  make(map[string]int64),
 	}
 }
 
@@ -90,6 +95,10 @@ func (w *Worker) TakeOrder(_ context.Context, externalID string) error {
 func (w *Worker) CompletePayment(ctx context.Context, paymentID string) error {
 	if w.p2cAccountID == "" {
 		return fmt.Errorf("no p2c account id configured")
+	}
+	// если paymentID в hex, попробуем найти numeric id
+	if num, ok := w.takeMap[paymentID]; ok {
+		paymentID = fmt.Sprintf("%d", num)
 	}
 	if err := w.client.CompletePayment(ctx, paymentID, w.p2cAccountID); err != nil {
 		return err
@@ -238,11 +247,37 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	}
 	w.seen[p.ID] = time.Now()
 
+	// Если есть актуальный блок, не трогаем заявки
+	if time.Now().Before(w.penaltyUntil) {
+		log.Printf("[worker %d] skip %s: in penalty until %s", w.cfg.AccountID, p.ID, w.penaltyUntil.Format(time.RFC3339))
+		return
+	}
+
 	log.Printf("[worker %d] live add id=%s amount=%s rate=%s", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate)
 
-	if err := w.client.TakeLivePayment(context.Background(), p.ID); err != nil {
-		log.Printf("[worker %d] take %s error: %v", w.cfg.AccountID, p.ID, err)
+	resp, err := w.client.TakeLivePayment(context.Background(), p.ID)
+	if err != nil {
+		if until, reason, ok := parsePenalty(err); ok {
+			w.penaltyUntil = until
+			w.penaltyReason = reason
+			msg := fmt.Sprintf("⛔️ Блок до %s\nПричина: %s\nЗаявки временно не принимаем.", until.Local().Format("15:04:05"), reason)
+			w.sendTelegram(msg)
+			log.Printf("[worker %d] penalty until %s reason=%s", w.cfg.AccountID, until.Format(time.RFC3339), reason)
+		} else if isActiveExists(err) {
+			log.Printf("[worker %d] active order exists, skip take", w.cfg.AccountID)
+		} else {
+			log.Printf("[worker %d] take %s error: %v", w.cfg.AccountID, p.ID, err)
+		}
 		return
+	}
+	if resp != nil {
+		defer fasthttp.ReleaseResponse(resp)
+		var tr p2c.TakeResponse
+		if err := json.Unmarshal(resp.Body(), &tr); err == nil && tr.Data != nil {
+			if num, err := tr.Data.ID.Int64(); err == nil {
+				w.takeMap[p.ID] = num
+			}
+		}
 	}
 
 	// Успешно приняли — отправляем в ТГ.
@@ -259,12 +294,44 @@ func urlEncode(s string) string {
 	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
 }
 
-func buildLiveMessage(p p2c.LivePayment) string {
-	return "🆕 Новая заявка\n" +
-		fmt.Sprintf("Бренд: %s\n", p.BrandName) +
-		fmt.Sprintf("Сумма: %s %s\n", p.InAmount, p.InAsset) +
-		fmt.Sprintf("Курс: %s\n", p.ExchangeRate) +
-		fmt.Sprintf("Вознаграждение: %s\n", p.FeeAmount) +
-		fmt.Sprintf("Провайдер: %s\n", p.Provider) +
-		fmt.Sprintf("QR: %s", p.URL)
+type penaltyPayload struct {
+	Error        string `json:"error"`
+	PenaltyEndAt string `json:"penalty_end_at"`
+	PenaltyType  string `json:"penalty_type"`
+}
+
+func parsePenalty(err error) (time.Time, string, bool) {
+	if err == nil {
+		return time.Time{}, "", false
+	}
+	var payload penaltyPayload
+	if json.Unmarshal([]byte(err.Error()), &payload) == nil {
+		if payload.Error == "MerchantPenalized" && payload.PenaltyEndAt != "" {
+			t, _ := time.Parse(time.RFC3339, payload.PenaltyEndAt)
+			return t, payload.PenaltyType, true
+		}
+	}
+	// fallback: try find substring penalty_end_at
+	if strings.Contains(err.Error(), "MerchantPenalized") {
+		// very naive parse
+		if idx := strings.Index(err.Error(), "penalty_end_at"); idx >= 0 {
+			rest := err.Error()[idx:]
+			if q := strings.Index(rest, "\""); q >= 0 {
+				rest = rest[q+1:]
+				if q2 := strings.Index(rest, "\""); q2 >= 0 {
+					ts := rest[:q2]
+					t, _ := time.Parse(time.RFC3339, ts)
+					return t, "unknown", true
+				}
+			}
+		}
+	}
+	return time.Time{}, "", false
+}
+
+func isActiveExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "ActiveOrderExists")
 }
