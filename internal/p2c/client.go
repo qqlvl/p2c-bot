@@ -2,6 +2,7 @@ package p2c
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -114,7 +115,7 @@ func (c *Client) TakeLivePayment(ctx context.Context, id string) (*TakeResult, e
 	}
 	url := fmt.Sprintf("%s/p2c/payments/take/%s", c.baseURL, id)
 	var t TraceTimings
-	var start, dnsStart, connStart, tlsStart, writeDone time.Time
+	var dnsStart, connStart, tlsStart, writeDone time.Time
 	trace := &httptrace.ClientTrace{
 		DNSStart: func(_ httptrace.DNSStartInfo) { dnsStart = time.Now() },
 		DNSDone:  func(_ httptrace.DNSDoneInfo) { t.DNSLookup = time.Since(dnsStart) },
