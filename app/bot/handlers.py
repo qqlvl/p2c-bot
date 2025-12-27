@@ -24,6 +24,30 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.bot.db_utils import ensure_orders_schema, wei_to_float
 
 
+def build_default_payment_kb(acc_id: int, payment_id: str, amount: float, rate: float, fee: float) -> InlineKeyboardMarkup:
+    payload = f"paid:{acc_id}:{payment_id}:{amount}:{rate}:{fee}"
+    cancel_payload = f"cancel:{acc_id}:{payment_id}"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Я оплатил", callback_data=payload),
+                InlineKeyboardButton(text="❌ Отменить", callback_data=cancel_payload),
+            ]
+        ]
+    )
+
+
+def build_confirm_kb(prefix: str, ok_payload: str, back_payload: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Да", callback_data=f"{prefix}ok:{ok_payload}"),
+                InlineKeyboardButton(text="↩️ Назад", callback_data=f"{prefix}back:{back_payload}"),
+            ]
+        ]
+    )
+
+
 async def refresh_account_view(callback: types.CallbackQuery, acc_id: int) -> None:
     # Re-render account menu by reusing selection logic.
     fake_cb = types.CallbackQuery(
@@ -85,7 +109,32 @@ async def on_paid(callback: types.CallbackQuery) -> None:
         await callback.answer("Ошибка данных платежа", show_alert=True)
         return
 
-    # Пытаемся подтвердить на движке/P2C
+    # Первая кнопка → показываем подтверждение.
+    await callback.answer("Подтвердить оплату?", show_alert=False)
+    ok_payload = f"{acc_id}:{payment_id}:{amount}:{rate}:{fee}"
+    kb = build_confirm_kb("paid_", ok_payload, ok_payload)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("paid_ok:"))
+async def on_paid_ok(callback: types.CallbackQuery) -> None:
+    parts = (callback.data or "").split(":")
+    if len(parts) < 6:
+        await callback.answer("Не распознал данные платежа", show_alert=True)
+        return
+    try:
+        acc_id = int(parts[1])
+        payment_id = parts[2]
+        amount = float(parts[3])
+        rate = float(parts[4])
+        fee = float(parts[5])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка данных платежа", show_alert=True)
+        return
+
     ok = await engine_client.complete_order(acc_id, payment_id)
     if not ok:
         await callback.answer("Не удалось подтвердить оплату на стороне P2C", show_alert=True)
@@ -100,8 +149,7 @@ async def on_paid(callback: types.CallbackQuery) -> None:
             await callback.answer("Аккаунт не найден", show_alert=True)
             return
         user_id = account.user_id
-        reward = wei_to_float(parts[5]) if len(parts) > 5 else 0.0
-        # Пишем заказ в orders с дополнительными полями для статистики.
+        reward = fee
         try:
             await session.execute(
                 text(
@@ -125,10 +173,41 @@ async def on_paid(callback: types.CallbackQuery) -> None:
             await session.commit()
         except Exception:
             await session.rollback()
-            # Даже если запись не удалась, ответим пользователю
-        await callback.answer("✅ Отметил как оплачено.", show_alert=False)
 
-    # При желании можно логировать в будущем rate/fee/payment_id
+    # Обновляем сообщение
+    try:
+        caption = callback.message.caption or ""
+        caption = caption + "\n\n✅ Оплата подтверждена."
+        await callback.message.edit_caption(caption, reply_markup=None)
+    except Exception:
+        try:
+            await callback.message.edit_text("✅ Оплата подтверждена.", reply_markup=None)
+        except Exception:
+            pass
+    await callback.answer("✅ Отметил как оплачено.", show_alert=False)
+
+
+@router.callback_query(F.data.startswith("paid_back:"))
+async def on_paid_back(callback: types.CallbackQuery) -> None:
+    parts = (callback.data or "").split(":")
+    if len(parts) < 6:
+        await callback.answer()
+        return
+    try:
+        acc_id = int(parts[1])
+        payment_id = parts[2]
+        amount = float(parts[3])
+        rate = float(parts[4])
+        fee = float(parts[5])
+    except Exception:
+        await callback.answer()
+        return
+    kb = build_default_payment_kb(acc_id, payment_id, amount, rate, fee)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("cancel:"))
@@ -146,12 +225,68 @@ async def on_cancel(callback: types.CallbackQuery) -> None:
         await callback.answer("Ошибка данных заявки", show_alert=True)
         return
 
+    await callback.answer("Точно отменить заявку?", show_alert=False)
+    # amount/rate/fee неизвестны здесь, поэтому ставим заглушки для возврата (0).
+    back_payload = f"{acc_id}:{payment_id}:0:0:0"
+    kb = build_confirm_kb("cancel_", f"{acc_id}:{payment_id}", back_payload)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("cancel_ok:"))
+async def on_cancel_ok(callback: types.CallbackQuery) -> None:
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3:
+        await callback.answer("Не распознал заявку", show_alert=True)
+        return
+    try:
+        acc_id = int(parts[1])
+        payment_id = parts[2]
+    except Exception:
+        await callback.answer("Ошибка данных заявки", show_alert=True)
+        return
+
     ok = await engine_client.cancel_order(acc_id, payment_id)
     if not ok:
         await callback.answer("Не удалось отменить заявку на стороне P2C", show_alert=True)
         return
 
+    # Обновляем сообщение или убираем клавиатуру
+    try:
+        caption = callback.message.caption or ""
+        caption = caption + "\n\n❌ Заявка отменена."
+        await callback.message.edit_caption(caption, reply_markup=None)
+    except Exception:
+        try:
+            await callback.message.delete_reply_markup()
+        except Exception:
+            pass
     await callback.answer("❌ Заявка отменена.", show_alert=False)
+
+
+@router.callback_query(F.data.startswith("cancel_back:"))
+async def on_cancel_back(callback: types.CallbackQuery) -> None:
+    parts = (callback.data or "").split(":")
+    if len(parts) < 6:
+        await callback.answer()
+        return
+    try:
+        acc_id = int(parts[1])
+        payment_id = parts[2]
+        amount = float(parts[3])
+        rate = float(parts[4])
+        fee = float(parts[5])
+    except Exception:
+        await callback.answer()
+        return
+    kb = build_default_payment_kb(acc_id, payment_id, amount, rate, fee)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer()
 
 
 class AddAccount(StatesGroup):
