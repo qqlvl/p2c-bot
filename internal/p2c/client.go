@@ -147,14 +147,15 @@ func (c *Client) TakeLivePayment(ctx context.Context, id string) (*TakeResult, e
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("take payment status %d body=%s", resp.StatusCode, string(body))
-	}
-	return &TakeResult{
+	result := &TakeResult{
 		Body:   body,
 		CFRay:  resp.Header.Get("CF-RAY"),
 		Timing: t,
-	}, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return result, fmt.Errorf("take payment status %d body=%s", resp.StatusCode, string(body))
+	}
+	return result, nil
 }
 
 // CompletePayment confirms payment.

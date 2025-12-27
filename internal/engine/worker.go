@@ -320,7 +320,21 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 		} else if isActiveExists(err) {
 			w.bumpActiveLock()
 		} else {
-			log.Printf("[worker %d] take %s error in %dms (toTake=%dms amount=%s): %v", w.cfg.AccountID, p.ID, takeDur.Milliseconds(), toTake.Milliseconds(), p.InAmount, err)
+			cfRay := ""
+			dnsMs := int64(-1)
+			connMs := int64(-1)
+			tlsMs := int64(-1)
+			srvMs := int64(-1)
+			reused := false
+			if takeRes != nil {
+				cfRay = takeRes.CFRay
+				dnsMs = takeRes.Timing.DNSLookup.Milliseconds()
+				connMs = takeRes.Timing.TCPConnection.Milliseconds()
+				tlsMs = takeRes.Timing.TLSHandshake.Milliseconds()
+				srvMs = takeRes.Timing.ServerTime.Milliseconds()
+				reused = takeRes.Timing.ReusedConn
+			}
+			log.Printf("[worker %d] take %s error in %dms (toTake=%dms amount=%s cfRay=%s dns=%dms conn=%dms tls=%dms srv=%dms reused=%v): %v", w.cfg.AccountID, p.ID, takeDur.Milliseconds(), toTake.Milliseconds(), p.InAmount, cfRay, dnsMs, connMs, tlsMs, srvMs, reused, err)
 		}
 		return
 	}
