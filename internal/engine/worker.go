@@ -71,6 +71,7 @@ func (w *Worker) Start() {
 		}
 		// Прогреваем HTTP-клиент, чтобы держать TLS/keepalive тёплым.
 		w.client.Warmup(context.Background())
+		go w.keepAliveLoop()
 		ctx, cancel := context.WithCancel(context.Background())
 		w.cancel = cancel
 		for {
@@ -93,6 +94,19 @@ func (w *Worker) Stop() {
 	}
 	close(w.stopCh)
 	<-w.doneCh
+}
+
+func (w *Worker) keepAliveLoop() {
+	ticker := time.NewTicker(8 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-w.stopCh:
+			return
+		case <-ticker.C:
+			w.client.Warmup(context.Background())
+		}
+	}
 }
 
 // TakeOrder is a stub for manual mode; will later hit P2C API.

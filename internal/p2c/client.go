@@ -44,7 +44,7 @@ func NewClient(baseURL, accessToken string) *Client {
 		MaxIdleConns:          512,
 		MaxIdleConnsPerHost:   256,
 		MaxConnsPerHost:       256,
-		IdleConnTimeout:       30 * time.Second,
+		IdleConnTimeout:       120 * time.Second,
 		TLSHandshakeTimeout:   2 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableCompression:    true,
