@@ -11,8 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/valyala/fasthttp"
-
 	"p2c-engine/internal/p2c"
 )
 
