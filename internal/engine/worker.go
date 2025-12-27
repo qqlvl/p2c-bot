@@ -2,12 +2,15 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
-	"time"
 	"net/url"
+	"strconv"
 	"strings"
-	"encoding/json"
+	"sync"
+	"time"
+
 	"github.com/valyala/fasthttp"
 
 	"p2c-engine/internal/p2c"
@@ -19,6 +22,7 @@ type Worker struct {
 	stopCh      chan struct{}
 	doneCh      chan struct{}
 	client      *p2c.Client
+	bgCtx       context.Context
 	botToken    string
 	cursor      string
 	seen        map[string]time.Time
@@ -28,6 +32,10 @@ type Worker struct {
 	penaltyUntil time.Time
 	penaltyReason string
 	takeMap     map[string]int64 // hex -> numeric id
+	activePaymentID string
+	activeLockUntil time.Time
+	lastPenaltyNotified time.Time
+	mu sync.Mutex
 }
 
 type WorkerConfig struct {
@@ -47,6 +55,7 @@ func NewWorker(cfg WorkerConfig, client *p2c.Client, botToken string) *Worker {
 		stopCh:   make(chan struct{}),
 		doneCh:   make(chan struct{}),
 		client:   client,
+		bgCtx:    context.Background(),
 		botToken: botToken,
 		seen:     make(map[string]time.Time),
 		p2cAccountID: cfg.P2CAccountID,
@@ -98,14 +107,17 @@ func (w *Worker) CompletePayment(ctx context.Context, paymentID string) error {
 		return fmt.Errorf("no p2c account id configured")
 	}
 	// если paymentID в hex, попробуем найти numeric id
-	if num, ok := w.takeMap[paymentID]; ok {
+	hexID := paymentID
+	if num, ok := w.lookupTakeID(paymentID); ok {
 		paymentID = fmt.Sprintf("%d", num)
 	}
 	if err := w.client.CompletePayment(ctx, paymentID, w.p2cAccountID); err != nil {
 		return err
 	}
+	w.clearActiveLock(hexID)
 	return nil
 }
+
 func (w *Worker) pollOnce(t time.Time) {
 	if w.client == nil {
 		return
@@ -120,7 +132,7 @@ func (w *Worker) pollOnce(t time.Time) {
 	}
 
 	// release active lock after 30s to avoid perma-block
-	payments, err := w.client.ListPayments(context.Background(), p2c.ListPaymentsParams{
+	payments, err := w.client.ListPayments(w.bgCtx, p2c.ListPaymentsParams{
 		Size:   10,
 		Status: p2c.StatusProcessing,
 		Cursor: w.cursor,
@@ -248,47 +260,58 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	}
 	w.seen[p.ID] = time.Now()
 
-	// Если есть актуальный блок, не трогаем заявки
-	if time.Now().Before(w.penaltyUntil) {
-		log.Printf("[worker %d] skip %s: in penalty until %s", w.cfg.AccountID, p.ID, w.penaltyUntil.Format(time.RFC3339))
+	now := time.Now()
+	// Если уже есть активный ордер, не дергаем take, чтобы не ловить 400/ActiveOrderExists.
+	if w.isActiveLocked(now) {
 		return
 	}
 
-	log.Printf("[worker %d] live add id=%s amount=%s rate=%s", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate)
+	// Если есть актуальный блок, не трогаем заявки
+	if now.Before(w.penaltyUntil) {
+		return
+	}
 
-	resp, err := w.client.TakeLivePayment(context.Background(), p.ID)
+	// Фильтр по сумме
+	if amount, err := strconv.ParseFloat(p.InAmount, 64); err == nil {
+		if w.cfg.MinAmount != nil && amount < *w.cfg.MinAmount {
+			return
+		}
+		if w.cfg.MaxAmount != nil && *w.cfg.MaxAmount > 0 && amount > *w.cfg.MaxAmount {
+			return
+		}
+	}
+
+	resp, err := w.client.TakeLivePayment(w.bgCtx, p.ID)
 	if err != nil {
 		if until, reason, ok := parsePenalty(err); ok {
 			w.penaltyUntil = until
 			w.penaltyReason = reason
-			msg := fmt.Sprintf("⛔️ Блок до %s\nПричина: %s\nЗаявки временно не принимаем.", until.Local().Format("15:04:05"), reason)
-			w.sendTelegram(msg)
-			log.Printf("[worker %d] penalty until %s reason=%s", w.cfg.AccountID, until.Format(time.RFC3339), reason)
-		} else if isActiveExists(err) {
-			log.Printf("[worker %d] active order exists, skip take", w.cfg.AccountID)
-		} else {
-			log.Printf("[worker %d] take %s error: %v", w.cfg.AccountID, p.ID, err)
-		}
-		return
+			if w.shouldNotifyPenalty(until) {
+				msg := fmt.Sprintf("⛔️ Блок до %s\nПричина: %s\nЗаявки временно не принимаем.", until.Local().Format("15:04:05"), reason)
+				w.sendTelegram(msg)
+			}
+	} else if isActiveExists(err) {
+		w.bumpActiveLock()
+	} else {
+		log.Printf("[worker %d] take %s error: %v", w.cfg.AccountID, p.ID, err)
 	}
+	return
+}
+	w.setActiveLock(p.ID, p.ExpiresAt)
+
+	var numericID int64
 	if resp != nil {
-		defer fasthttp.ReleaseResponse(resp)
 		var tr p2c.TakeResponse
 		if err := json.Unmarshal(resp.Body(), &tr); err == nil && tr.Data != nil {
 			if num, err := tr.Data.ID.Int64(); err == nil {
-				w.takeMap[p.ID] = num
+				numericID = num
+				w.storeTakeID(p.ID, num)
 			}
 		}
+		fasthttp.ReleaseResponse(resp)
 	}
 
-	// Успешно приняли — отправляем в ТГ.
-	status := "🤖 Заявка принята автоматически ✅"
-	qrURL := fmt.Sprintf("https://quickchart.io/qr?text=%s&size=300", urlEncode(p.URL))
-	caption := buildLiveCaption(p, status)
-	if err := w.sendTelegramPhoto(qrURL, caption, buildPaidKeyboard(w.cfg.AccountID, p)); err != nil {
-		log.Printf("[worker %d] telegram photo error: %v", w.cfg.AccountID, err)
-		w.sendTelegram(caption)
-	}
+	go w.notifyLiveAccepted(p, numericID)
 }
 
 func urlEncode(s string) string {
@@ -335,4 +358,91 @@ func isActiveExists(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "ActiveOrderExists")
+}
+
+func (w *Worker) shouldNotifyPenalty(until time.Time) bool {
+	if until.IsZero() {
+		return false
+	}
+	if until.After(w.lastPenaltyNotified) {
+		w.lastPenaltyNotified = until
+		return true
+	}
+	return false
+}
+
+func (w *Worker) isActiveLocked(now time.Time) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.activeLockUntil.IsZero() && w.activePaymentID == "" {
+		return false
+	}
+	if now.Before(w.activeLockUntil) {
+		return true
+	}
+	w.activePaymentID = ""
+	w.activeLockUntil = time.Time{}
+	return false
+}
+
+func (w *Worker) setActiveLock(id string, expiresAt string) {
+	lockUntil := time.Now().Add(5 * time.Minute)
+	if expiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, expiresAt); err == nil && t.After(time.Now()) {
+			lockUntil = t.Add(10 * time.Second)
+		}
+	}
+	w.mu.Lock()
+	w.activePaymentID = id
+	w.activeLockUntil = lockUntil
+	w.mu.Unlock()
+}
+
+func (w *Worker) bumpActiveLock() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	backoff := time.Now().Add(2 * time.Second)
+	if w.activeLockUntil.Before(backoff) {
+		w.activeLockUntil = backoff
+	}
+}
+
+func (w *Worker) clearActiveLock(id string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if id == "" || id == w.activePaymentID {
+		w.activePaymentID = ""
+		w.activeLockUntil = time.Time{}
+	}
+}
+
+func (w *Worker) storeTakeID(hexID string, numericID int64) {
+	if hexID == "" || numericID == 0 {
+		return
+	}
+	w.mu.Lock()
+	w.takeMap[hexID] = numericID
+	w.mu.Unlock()
+}
+
+func (w *Worker) lookupTakeID(hexID string) (int64, bool) {
+	if hexID == "" {
+		return 0, false
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	num, ok := w.takeMap[hexID]
+	return num, ok
+}
+
+func (w *Worker) notifyLiveAccepted(p p2c.LivePayment, numericID int64) {
+	status := "🤖 Заявка принята автоматически ✅"
+	qrURL := fmt.Sprintf("https://quickchart.io/qr?text=%s&size=200", urlEncode(p.URL))
+	caption := buildLiveCaption(p, status)
+	if err := w.sendTelegramPhoto(qrURL, caption, buildPaidKeyboard(w.cfg.AccountID, p)); err != nil {
+		log.Printf("[worker %d] telegram photo error: %v", w.cfg.AccountID, err)
+		w.sendTelegram(caption)
+		return
+	}
 }
