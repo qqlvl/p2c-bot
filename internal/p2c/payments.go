@@ -48,6 +48,11 @@ func (p Payment) IDString() string {
 	return p.ID.String()
 }
 
+func (p Payment) NumericID() int64 {
+	v, _ := strconv.ParseInt(p.ID.String(), 10, 64)
+	return v
+}
+
 type ListPaymentsParams struct {
 	Size   int
 	Status PaymentStatus
