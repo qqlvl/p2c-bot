@@ -21,6 +21,7 @@ from app.db.models import AccountSettings, CryptoAccount, Order, User
 from app.services.engine_client import engine_client
 import httpx
 from sqlalchemy.exc import SQLAlchemyError
+from app.bot.db_utils import ensure_orders_schema, wei_to_float
 
 
 async def refresh_account_view(callback: types.CallbackQuery, acc_id: int) -> None:
@@ -91,6 +92,7 @@ async def on_paid(callback: types.CallbackQuery) -> None:
         return
 
     async with AsyncSessionLocal() as session:
+        await ensure_orders_schema(session)
         account = await session.scalar(
             select(CryptoAccount).where(CryptoAccount.id == acc_id)
         )
@@ -98,17 +100,25 @@ async def on_paid(callback: types.CallbackQuery) -> None:
             await callback.answer("Аккаунт не найден", show_alert=True)
             return
         user_id = account.user_id
-        # Пишем в существующую таблицу orders (простая схема: id, user_id, status, amount, created_at)
+        reward = wei_to_float(parts[5]) if len(parts) > 5 else 0.0
+        # Пишем заказ в orders с дополнительными полями для статистики.
         try:
             await session.execute(
                 text(
-                    "INSERT INTO orders (user_id, status, amount, created_at) "
-                    "VALUES (:user_id, :status, :amount, :created_at)"
+                    """
+                    INSERT INTO orders (user_id, account_id, external_id, status, amount, amount_fiat, rate, reward_amount, created_at)
+                    VALUES (:user_id, :account_id, :external_id, :status, :amount, :amount_fiat, :rate, :reward_amount, :created_at)
+                    """
                 ),
                 {
                     "user_id": user_id,
+                    "account_id": acc_id,
+                    "external_id": payment_id,
                     "status": "paid",
                     "amount": amount,
+                    "amount_fiat": amount,
+                    "rate": rate,
+                    "reward_amount": reward,
                     "created_at": datetime.utcnow(),
                 },
             )
