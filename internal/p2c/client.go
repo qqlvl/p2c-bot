@@ -52,18 +52,21 @@ func (c *Client) statusOK(resp *fasthttp.Response) bool {
 
 // TakeLivePayment tries to accept a payment by its hex/id from websocket list:update.
 // Endpoint: POST /p2c/payments/take/{id}
-func (c *Client) TakeLivePayment(ctx context.Context, id string) error {
+func (c *Client) TakeLivePayment(ctx context.Context, id string) (*fasthttp.Response, error) {
 	req, resp := c.newRequest(http.MethodPost, fmt.Sprintf("/p2c/payments/take/%s", id), nil)
 	defer fasthttp.ReleaseRequest(req)
-	defer fasthttp.ReleaseResponse(resp)
 
 	if err := c.do(ctx, req, resp); err != nil {
-		return err
+		fasthttp.ReleaseResponse(resp)
+		return nil, err
 	}
 	if !c.statusOK(resp) {
-		return fmt.Errorf("take payment status %d body=%s", resp.StatusCode(), string(resp.Body()))
+		bodyCopy := append([]byte{}, resp.Body()...)
+		status := resp.StatusCode()
+		fasthttp.ReleaseResponse(resp)
+		return nil, fmt.Errorf("take payment status %d body=%s", status, string(bodyCopy))
 	}
-	return nil
+	return resp, nil
 }
 
 // CompletePayment confirms payment.

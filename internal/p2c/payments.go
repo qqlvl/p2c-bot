@@ -64,6 +64,13 @@ type ListPaymentsResponse struct {
 	Cursor string    `json:"cursor"`
 }
 
+// TakeResponse mirrors data from /take to extract numeric id.
+type TakeResponse struct {
+	Data *struct {
+		ID json.Number `json:"id"`
+	} `json:"data,omitempty"`
+}
+
 func (c *Client) ListPayments(ctx context.Context, params ListPaymentsParams) (*ListPaymentsResponse, error) {
 	req, resp := c.newRequest("GET", "/p2c/payments", nil)
 	query := req.URI().QueryArgs()
