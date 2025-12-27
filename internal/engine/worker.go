@@ -127,8 +127,8 @@ func (w *Worker) CancelPayment(ctx context.Context, paymentID string) error {
 	if num, ok := w.lookupTakeID(paymentID); ok {
 		paymentID = fmt.Sprintf("%d", num)
 	}
-	// P2C ожидает reason; используем дефолтный тег отмены.
-	const cancelReason = "user_cancel"
+	// P2C ожидает reason (enum). Используем допустимый вариант из фронта.
+	const cancelReason = "balance"
 	if err := w.client.CancelPayment(ctx, paymentID, cancelReason); err != nil {
 		return err
 	}
