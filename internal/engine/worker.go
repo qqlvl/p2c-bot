@@ -281,7 +281,6 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	now := time.Now()
 	w.seen[p.ID] = now
 
-	start := time.Now()
 	// Если уже есть активный ордер, не дергаем take, чтобы не ловить 400/ActiveOrderExists.
 	if w.isActiveLocked(now) {
 		log.Printf("[worker %d] skip %s: active order in progress", w.cfg.AccountID, p.ID)
