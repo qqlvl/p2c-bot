@@ -53,7 +53,7 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 
 	msgCount := 0
 	addTimes := make(map[string]time.Time)
-	var listIDs []string
+	listIDs := make([]string, 0, 32)
 
 	for {
 		select {
@@ -77,6 +77,9 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 			}
 			// connect ack from server -> отправляем list:initialize
 			if strings.HasPrefix(s, "40") {
+				// новый коннект — сбрасываем локальное состояние списка
+				addTimes = make(map[string]time.Time)
+				listIDs = listIDs[:0]
 				if err := conn.WriteMessage(websocket.TextMessage, []byte(`42["list:initialize"]`)); err != nil {
 					return err
 				}
@@ -94,18 +97,24 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 				continue
 			}
 			var event string
-			if err := json.Unmarshal(arr[0], &event); err != nil || event != "list:update" {
-				// list:snapshot может прийти как отдельное событие
-				if event == "list:snapshot" {
-					var snapshot []LivePayment
-					if err := json.Unmarshal(arr[1], &snapshot); err == nil {
-						listIDs = listIDs[:0]
-						for _, p := range snapshot {
-							listIDs = append(listIDs, p.ID)
-							addTimes[p.ID] = time.Now()
-						}
+			if err := json.Unmarshal(arr[0], &event); err != nil {
+				continue
+			}
+			if event == "list:snapshot" {
+				var snapshot []LivePayment
+				if err := json.Unmarshal(arr[1], &snapshot); err == nil {
+					addTimes = make(map[string]time.Time)
+					listIDs = listIDs[:0]
+					now := time.Now()
+					for _, p := range snapshot {
+						listIDs = append(listIDs, p.ID)
+						addTimes[p.ID] = now
 					}
+					log.Printf("ws snapshot loaded %d items", len(listIDs))
 				}
+				continue
+			}
+			if event != "list:update" {
 				continue
 			}
 			var updates []listUpdate
@@ -116,26 +125,45 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 				log.Printf("ws list:update op=%s id=%s", u.Op, idFrom(u.Data))
 				if u.Op == "add" && u.Data != nil {
 					// фиксируем время появления в стриме
-					addTimes[u.Data.ID] = time.Now()
-					// обновляем локальный список для расчета ttl
-					if u.Pos != nil && *u.Pos >= 0 && *u.Pos <= len(listIDs) {
-						pos := *u.Pos
-						listIDs = append(listIDs[:pos], append([]string{u.Data.ID}, listIDs[pos:]...)...)
-					} else {
-						listIDs = append(listIDs, u.Data.ID)
+					if _, ok := addTimes[u.Data.ID]; !ok {
+						addTimes[u.Data.ID] = time.Now()
 					}
+					// убираем дубликат, если внезапно пришёл повтор
+					for i, id := range listIDs {
+						if id == u.Data.ID {
+							listIDs = append(listIDs[:i], listIDs[i+1:]...)
+							break
+						}
+					}
+					pos := 0
+					if u.Pos != nil && *u.Pos >= 0 && *u.Pos <= len(listIDs) {
+						pos = *u.Pos
+					}
+					if pos < 0 {
+						pos = 0
+					}
+					if pos > len(listIDs) {
+						pos = len(listIDs)
+					}
+					listIDs = append(listIDs[:pos], append([]string{u.Data.ID}, listIDs[pos:]...)...)
 					handler(*u.Data)
 				}
 				if u.Op == "remove" {
 					// если пришел pos, пытаемся вытащить id и посчитать ttl
-					if u.Pos != nil && *u.Pos >= 0 && *u.Pos < len(listIDs) {
-						id := listIDs[*u.Pos]
-						ttl := time.Since(addTimes[id])
-						log.Printf("ws list:remove id=%s ttl=%dms", id, ttl.Milliseconds())
-						// убираем из списка
-						listIDs = append(listIDs[:*u.Pos], listIDs[*u.Pos+1:]...)
-						delete(addTimes, id)
+					if u.Pos == nil || *u.Pos < 0 || *u.Pos >= len(listIDs) {
+						log.Printf("ws list:remove desync pos=%v len=%d", u.Pos, len(listIDs))
+						continue
 					}
+					id := listIDs[*u.Pos]
+					tAdd, ok := addTimes[id]
+					ttl := int64(-1)
+					if ok {
+						ttl = time.Since(tAdd).Milliseconds()
+					}
+					log.Printf("ws list:remove id=%s pos=%d ttl=%dms hasAdd=%v", id, *u.Pos, ttl, ok)
+					// убираем из списка
+					listIDs = append(listIDs[:*u.Pos], listIDs[*u.Pos+1:]...)
+					delete(addTimes, id)
 				}
 			}
 		}
