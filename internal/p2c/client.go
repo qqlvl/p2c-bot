@@ -1,7 +1,6 @@
 package p2c
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
