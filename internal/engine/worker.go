@@ -309,7 +309,7 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 
 	takeStart := time.Now()
 	toTake := takeStart.Sub(eventStart)
-	resp, err := w.client.TakeLivePayment(w.bgCtx, p.ID)
+	respBody, err := w.client.TakeLivePayment(w.bgCtx, p.ID)
 	takeDur := time.Since(takeStart)
 	if err != nil {
 		if until, reason, ok := parsePenalty(err); ok {
@@ -329,15 +329,12 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	w.setActiveLock(p.ID, p.ExpiresAt)
 
 	var numericID int64
-	if resp != nil {
-		var tr p2c.TakeResponse
-		if err := json.Unmarshal(resp.Body(), &tr); err == nil && tr.Data != nil {
-			if num, err := tr.Data.ID.Int64(); err == nil {
-				numericID = num
-				w.storeTakeID(p.ID, num)
-			}
+	var tr p2c.TakeResponse
+	if err := json.Unmarshal(respBody, &tr); err == nil && tr.Data != nil {
+		if num, err := tr.Data.ID.Int64(); err == nil {
+			numericID = num
+			w.storeTakeID(p.ID, num)
 		}
-		fasthttp.ReleaseResponse(resp)
 	}
 
 	go w.notifyLiveAccepted(p, numericID)

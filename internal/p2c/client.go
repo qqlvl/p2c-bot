@@ -1,8 +1,11 @@
 package p2c
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -13,9 +16,22 @@ type Client struct {
 	baseURL     string
 	accessToken string
 	httpClient  *fasthttp.Client
+	h2Client    *http.Client
 }
 
 func NewClient(baseURL, accessToken string) *Client {
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 2 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          512,
+		MaxIdleConnsPerHost:   256,
+		MaxConnsPerHost:       256,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   2 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DisableCompression:    true,
+	}
 	return &Client{
 		baseURL:     baseURL,
 		accessToken: accessToken,
@@ -25,6 +41,10 @@ func NewClient(baseURL, accessToken string) *Client {
 			ReadTimeout:              2 * time.Second,
 			WriteTimeout:             2 * time.Second,
 			MaxIdleConnDuration:      30 * time.Second,
+		},
+		h2Client: &http.Client{
+			Transport: transport,
+			Timeout:   3 * time.Second,
 		},
 	}
 }
@@ -39,6 +59,12 @@ func (c *Client) Warmup(ctx context.Context) {
 	defer fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(resp)
 	_ = c.do(ctx, req, resp)
+	// пробуем также HTTP/2 клиент
+	hreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
+	if c.accessToken != "" {
+		hreq.Header.Set("Cookie", fmt.Sprintf("access_token=%s", c.accessToken))
+	}
+	_, _ = c.h2Client.Do(hreq)
 }
 
 func (c *Client) newRequest(method, path string, body []byte) (*fasthttp.Request, *fasthttp.Response) {
@@ -67,21 +93,27 @@ func (c *Client) statusOK(resp *fasthttp.Response) bool {
 
 // TakeLivePayment tries to accept a payment by its hex/id from websocket list:update.
 // Endpoint: POST /p2c/payments/take/{id}
-func (c *Client) TakeLivePayment(ctx context.Context, id string) (*fasthttp.Response, error) {
-	req, resp := c.newRequest(http.MethodPost, fmt.Sprintf("/p2c/payments/take/%s", id), nil)
-	defer fasthttp.ReleaseRequest(req)
+func (c *Client) TakeLivePayment(ctx context.Context, id string) ([]byte, error) {
+	if id == "" {
+		return nil, fmt.Errorf("empty id")
+	}
+	url := fmt.Sprintf("%s/p2c/payments/take/%s", c.baseURL, id)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if c.accessToken != "" {
+		req.Header.Set("Cookie", fmt.Sprintf("access_token=%s", c.accessToken))
+	}
+	req.Header.Set("Content-Type", "application/json")
 
-	if err := c.do(ctx, req, resp); err != nil {
-		fasthttp.ReleaseResponse(resp)
+	resp, err := c.h2Client.Do(req)
+	if err != nil {
 		return nil, err
 	}
-	if !c.statusOK(resp) {
-		bodyCopy := append([]byte{}, resp.Body()...)
-		status := resp.StatusCode()
-		fasthttp.ReleaseResponse(resp)
-		return nil, fmt.Errorf("take payment status %d body=%s", status, string(bodyCopy))
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("take payment status %d body=%s", resp.StatusCode, string(body))
 	}
-	return resp, nil
+	return body, nil
 }
 
 // CompletePayment confirms payment.
