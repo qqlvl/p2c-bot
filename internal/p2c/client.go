@@ -33,6 +33,14 @@ func (c *Client) BaseURL() string {
 	return c.baseURL
 }
 
+// Warmup opens a cheap request to prime TLS/keepalive.
+func (c *Client) Warmup(ctx context.Context) {
+	req, resp := c.newRequest(http.MethodGet, "/health", nil)
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+	_ = c.do(ctx, req, resp)
+}
+
 func (c *Client) newRequest(method, path string, body []byte) (*fasthttp.Request, *fasthttp.Response) {
 	req := fasthttp.AcquireRequest()
 	resp := fasthttp.AcquireResponse()

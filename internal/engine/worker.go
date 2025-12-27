@@ -143,6 +143,8 @@ func (w *Worker) pollOnce(t time.Time) {
 	if !w.cfg.Active || !w.cfg.AutoMode {
 		return
 	}
+	// Warmup HTTP client to prime TLS/keepalive.
+	w.client.Warmup(context.Background())
 
 	if !w.allowRequest(t) {
 		log.Printf("[worker %d] poll skipped: rate limit window", w.cfg.AccountID)
@@ -303,8 +305,9 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 		}
 	}
 
+	takeStart := time.Now()
 	resp, err := w.client.TakeLivePayment(w.bgCtx, p.ID)
-	takeDur := time.Since(start)
+	takeDur := time.Since(takeStart)
 	if err != nil {
 		if until, reason, ok := parsePenalty(err); ok {
 			w.penaltyUntil = until
