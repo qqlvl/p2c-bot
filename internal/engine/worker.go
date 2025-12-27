@@ -71,6 +71,8 @@ func (w *Worker) Start() {
 			log.Printf("[worker %d] stopped (inactive/auto off)", w.cfg.AccountID)
 			return
 		}
+		// Прогреваем HTTP-клиент, чтобы держать TLS/keepalive тёплым.
+		w.client.Warmup(context.Background())
 		ctx, cancel := context.WithCancel(context.Background())
 		w.cancel = cancel
 		for {
@@ -279,6 +281,7 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 		return
 	}
 	now := time.Now()
+	eventStart := now
 	w.seen[p.ID] = now
 
 	// Если уже есть активный ордер, не дергаем take, чтобы не ловить 400/ActiveOrderExists.
@@ -305,6 +308,7 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	}
 
 	takeStart := time.Now()
+	toTake := takeStart.Sub(eventStart)
 	resp, err := w.client.TakeLivePayment(w.bgCtx, p.ID)
 	takeDur := time.Since(takeStart)
 	if err != nil {
@@ -318,7 +322,7 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 		} else if isActiveExists(err) {
 			w.bumpActiveLock()
 		} else {
-			log.Printf("[worker %d] take %s error in %dms: %v", w.cfg.AccountID, p.ID, takeDur.Milliseconds(), err)
+			log.Printf("[worker %d] take %s error in %dms (toTake=%dms amount=%s): %v", w.cfg.AccountID, p.ID, takeDur.Milliseconds(), toTake.Milliseconds(), p.InAmount, err)
 		}
 		return
 	}
@@ -337,7 +341,7 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	}
 
 	go w.notifyLiveAccepted(p, numericID)
-	log.Printf("[worker %d] took %s amount=%s rate=%s in %dms", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate, takeDur.Milliseconds())
+	log.Printf("[worker %d] took %s amount=%s rate=%s in %dms (toTake=%dms)", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate, takeDur.Milliseconds(), toTake.Milliseconds())
 }
 
 func urlEncode(s string) string {
