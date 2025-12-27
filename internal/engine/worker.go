@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"encoding/json"
+	"github.com/valyala/fasthttp"
 
 	"p2c-engine/internal/p2c"
 )
