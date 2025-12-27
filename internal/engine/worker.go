@@ -75,7 +75,7 @@ func (w *Worker) Start() {
 		ctx, cancel := context.WithCancel(context.Background())
 		w.cancel = cancel
 		for {
-			if err := p2c.SubscribeSocket(ctx, w.client.BaseURL(), w.cfg.AccessToken, w.handleLivePayment); err != nil {
+			if err := p2c.SubscribeSocket(ctx, w.client.BaseURL(), w.cfg.AccessToken, w.handleLivePayment, w.handleLiveRemove); err != nil {
 				log.Printf("[worker %d] websocket error: %v", w.cfg.AccountID, err)
 			}
 			select {
@@ -376,6 +376,14 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 
 	go w.notifyLiveAccepted(p, numericID)
 	log.Printf("[worker %d] took %s amount=%s rate=%s in %dms (toTake=%dms cfRay=%s dns=%dms conn=%dms tls=%dms srv=%dms reused=%v)", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate, takeDur.Milliseconds(), toTake.Milliseconds(), takeRes.CFRay, takeRes.Timing.DNSLookup.Milliseconds(), takeRes.Timing.TCPConnection.Milliseconds(), takeRes.Timing.TLSHandshake.Milliseconds(), takeRes.Timing.ServerTime.Milliseconds(), takeRes.Timing.ReusedConn)
+}
+
+func (w *Worker) handleLiveRemove(id string) {
+	if id == "" {
+		return
+	}
+	// снимаем лок, чтобы следующая заявка не блокировалась после remove
+	w.clearActiveLock(id)
 }
 
 func urlEncode(s string) string {

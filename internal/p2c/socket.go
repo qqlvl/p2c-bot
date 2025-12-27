@@ -37,8 +37,8 @@ type listUpdate struct {
 	Pos  *int         `json:"pos,omitempty"`
 }
 
-// SubscribeSocket connects to p2c-socket and feeds incoming "op=add" updates via handler.
-func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler func(LivePayment)) error {
+// SubscribeSocket connects to p2c-socket and feeds incoming updates via handlers.
+func SubscribeSocket(ctx context.Context, baseURL, accessToken string, onAdd func(LivePayment), onRemove func(string)) error {
 	wsURL, pingInterval, err := eioHandshake(baseURL, accessToken)
 	if err != nil {
 		return fmt.Errorf("handshake: %w", err)
@@ -146,7 +146,9 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 						pos = len(listIDs)
 					}
 					listIDs = append(listIDs[:pos], append([]string{u.Data.ID}, listIDs[pos:]...)...)
-					handler(*u.Data)
+					if onAdd != nil {
+						onAdd(*u.Data)
+					}
 				}
 				if u.Op == "remove" {
 					// если пришел pos, пытаемся вытащить id и посчитать ttl
@@ -161,6 +163,9 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 						ttl = time.Since(tAdd).Milliseconds()
 					}
 					log.Printf("ws list:remove id=%s pos=%d ttl=%dms hasAdd=%v", id, *u.Pos, ttl, ok)
+					if onRemove != nil {
+						onRemove(id)
+					}
 					// убираем из списка
 					listIDs = append(listIDs[:*u.Pos], listIDs[*u.Pos+1:]...)
 					delete(addTimes, id)
