@@ -253,14 +253,14 @@ async def on_cancel_ok(callback: types.CallbackQuery) -> None:
         await callback.answer("Не удалось отменить заявку на стороне P2C", show_alert=True)
         return
 
-    # Обновляем сообщение или убираем клавиатуру
+    # Удаляем сообщение с QR, чтобы не висело в чате
     try:
-        caption = callback.message.caption or ""
-        caption = caption + "\n\n❌ Заявка отменена."
-        await callback.message.edit_caption(caption, reply_markup=None)
+        await callback.message.delete()
     except Exception:
         try:
-            await callback.message.delete_reply_markup()
+            caption = callback.message.caption or ""
+            caption = caption + "\n\n❌ Заявка отменена."
+            await callback.message.edit_caption(caption, reply_markup=None)
         except Exception:
             pass
     await callback.answer("❌ Заявка отменена.", show_alert=False)

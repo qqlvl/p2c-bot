@@ -324,6 +324,17 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	takeRes, err := w.client.TakeLivePayment(w.bgCtx, p.ID)
 	takeDur := time.Since(takeStart)
 	if err != nil {
+		if takeRes != nil {
+			if until, reason, ok := parsePenaltyBody(takeRes.Body); ok {
+				w.penaltyUntil = until
+				w.penaltyReason = reason
+				if w.shouldNotifyPenalty(until) {
+					msg := fmt.Sprintf("⛔️ Блок до %s\nПричина: %s\nЗаявки временно не принимаем.", until.Local().Format("15:04:05"), reason)
+					w.sendTelegram(msg)
+				}
+				return
+			}
+		}
 		if until, reason, ok := parsePenalty(err); ok {
 			w.penaltyUntil = until
 			w.penaltyReason = reason
@@ -401,6 +412,20 @@ func parsePenalty(err error) (time.Time, string, bool) {
 					return t, "unknown", true
 				}
 			}
+		}
+	}
+	return time.Time{}, "", false
+}
+
+func parsePenaltyBody(body []byte) (time.Time, string, bool) {
+	if len(body) == 0 {
+		return time.Time{}, "", false
+	}
+	var payload penaltyPayload
+	if json.Unmarshal(body, &payload) == nil {
+		if payload.Error == "MerchantPenalized" && payload.PenaltyEndAt != "" {
+			t, _ := time.Parse(time.RFC3339, payload.PenaltyEndAt)
+			return t, payload.PenaltyType, true
 		}
 	}
 	return time.Time{}, "", false
