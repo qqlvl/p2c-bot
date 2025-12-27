@@ -307,7 +307,7 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 
 	takeStart := time.Now()
 	toTake := takeStart.Sub(eventStart)
-	respBody, err := w.client.TakeLivePayment(w.bgCtx, p.ID)
+	takeRes, err := w.client.TakeLivePayment(w.bgCtx, p.ID)
 	takeDur := time.Since(takeStart)
 	if err != nil {
 		if until, reason, ok := parsePenalty(err); ok {
@@ -328,7 +328,7 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 
 	var numericID int64
 	var tr p2c.TakeResponse
-	if err := json.Unmarshal(respBody, &tr); err == nil && tr.Data != nil {
+	if err := json.Unmarshal(takeRes.Body, &tr); err == nil && tr.Data != nil {
 		if num, err := tr.Data.ID.Int64(); err == nil {
 			numericID = num
 			w.storeTakeID(p.ID, num)
@@ -336,7 +336,7 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	}
 
 	go w.notifyLiveAccepted(p, numericID)
-	log.Printf("[worker %d] took %s amount=%s rate=%s in %dms (toTake=%dms)", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate, takeDur.Milliseconds(), toTake.Milliseconds())
+	log.Printf("[worker %d] took %s amount=%s rate=%s in %dms (toTake=%dms cfRay=%s dns=%dms conn=%dms tls=%dms srv=%dms)", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate, takeDur.Milliseconds(), toTake.Milliseconds(), takeRes.CFRay, takeRes.Timing.DNSLookup.Milliseconds(), takeRes.Timing.TCPConnection.Milliseconds(), takeRes.Timing.TLSHandshake.Milliseconds(), takeRes.Timing.ServerTime.Milliseconds())
 }
 
 func urlEncode(s string) string {

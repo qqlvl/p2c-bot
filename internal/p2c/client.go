@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"time"
 
 	"github.com/valyala/fasthttp"
@@ -16,6 +17,21 @@ type Client struct {
 	accessToken string
 	httpClient  *fasthttp.Client
 	h2Client    *http.Client
+}
+
+// TraceTimings captures key timings for HTTP request.
+type TraceTimings struct {
+	DNSLookup     time.Duration
+	TCPConnection time.Duration
+	TLSHandshake  time.Duration
+	ServerTime    time.Duration // from write to first byte
+}
+
+// TakeResult carries take response details.
+type TakeResult struct {
+	Body   []byte
+	CFRay  string
+	Timing TraceTimings
 }
 
 func NewClient(baseURL, accessToken string) *Client {
@@ -92,11 +108,28 @@ func (c *Client) statusOK(resp *fasthttp.Response) bool {
 
 // TakeLivePayment tries to accept a payment by its hex/id from websocket list:update.
 // Endpoint: POST /p2c/payments/take/{id}
-func (c *Client) TakeLivePayment(ctx context.Context, id string) ([]byte, error) {
+func (c *Client) TakeLivePayment(ctx context.Context, id string) (*TakeResult, error) {
 	if id == "" {
 		return nil, fmt.Errorf("empty id")
 	}
 	url := fmt.Sprintf("%s/p2c/payments/take/%s", c.baseURL, id)
+	var t TraceTimings
+	var start, dnsStart, connStart, tlsStart, writeDone time.Time
+	trace := &httptrace.ClientTrace{
+		DNSStart: func(_ httptrace.DNSStartInfo) { dnsStart = time.Now() },
+		DNSDone:  func(_ httptrace.DNSDoneInfo) { t.DNSLookup = time.Since(dnsStart) },
+		ConnectStart: func(_, _ string) { connStart = time.Now() },
+		ConnectDone: func(_, _ string, _ error) { t.TCPConnection = time.Since(connStart) },
+		TLSHandshakeStart: func() { tlsStart = time.Now() },
+		TLSHandshakeDone:  func(_ tls.ConnectionState, _ error) { t.TLSHandshake = time.Since(tlsStart) },
+		WroteRequest:      func(_ httptrace.WroteRequestInfo) { writeDone = time.Now() },
+		GotFirstResponseByte: func() {
+			if !writeDone.IsZero() {
+				t.ServerTime = time.Since(writeDone)
+			}
+		},
+	}
+	ctx = httptrace.WithClientTrace(ctx, trace)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if c.accessToken != "" {
 		req.Header.Set("Cookie", fmt.Sprintf("access_token=%s", c.accessToken))
@@ -112,7 +145,11 @@ func (c *Client) TakeLivePayment(ctx context.Context, id string) ([]byte, error)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("take payment status %d body=%s", resp.StatusCode, string(body))
 	}
-	return body, nil
+	return &TakeResult{
+		Body:   body,
+		CFRay:  resp.Header.Get("CF-RAY"),
+		Timing: t,
+	}, nil
 }
 
 // CompletePayment confirms payment.
