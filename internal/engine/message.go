@@ -128,16 +128,21 @@ func buildPaidKeyboard(accID int64, p p2c.LivePayment) map[string]any {
 		return nil
 	}
 	// payload: paid:<acc>:<payID>:<amount>:<rate>:<fee>
-	payload := fmt.Sprintf(
+	paidPayload := fmt.Sprintf(
 		"paid:%d:%s:%s:%s:%s",
 		accID, p.ID, p.InAmount, p.ExchangeRate, p.FeeAmount,
 	)
+	cancelPayload := fmt.Sprintf("cancel:%d:%s", accID, p.ID)
 	return map[string]any{
 		"inline_keyboard": [][]map[string]string{
 			{
 				{
 					"text":         "✅ Я оплатил",
-					"callback_data": payload,
+					"callback_data": paidPayload,
+				},
+				{
+					"text":         "❌ Отменить",
+					"callback_data": cancelPayload,
 				},
 			},
 		},

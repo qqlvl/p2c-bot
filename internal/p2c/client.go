@@ -84,3 +84,19 @@ func (c *Client) CompletePayment(ctx context.Context, id string, method string) 
 	}
 	return nil
 }
+
+// CancelPayment cancels a payment.
+func (c *Client) CancelPayment(ctx context.Context, id string, reason string) error {
+	body := []byte(fmt.Sprintf(`{"reason":"%s"}`, reason))
+	req, resp := c.newRequest(http.MethodPost, fmt.Sprintf("/p2c/payments/%s/cancel", id), body)
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+
+	if err := c.do(ctx, req, resp); err != nil {
+		return err
+	}
+	if !c.statusOK(resp) {
+		return fmt.Errorf("cancel payment status %d body=%s", resp.StatusCode(), string(resp.Body()))
+	}
+	return nil
+}

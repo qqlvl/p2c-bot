@@ -118,6 +118,24 @@ func (w *Worker) CompletePayment(ctx context.Context, paymentID string) error {
 	return nil
 }
 
+// CancelPayment cancels accepted payment.
+func (w *Worker) CancelPayment(ctx context.Context, paymentID string) error {
+	if w.p2cAccountID == "" {
+		return fmt.Errorf("no p2c account id configured")
+	}
+	hexID := paymentID
+	if num, ok := w.lookupTakeID(paymentID); ok {
+		paymentID = fmt.Sprintf("%d", num)
+	}
+	// P2C ожидает reason; используем дефолтный тег отмены.
+	const cancelReason = "user_cancel"
+	if err := w.client.CancelPayment(ctx, paymentID, cancelReason); err != nil {
+		return err
+	}
+	w.clearActiveLock(hexID)
+	return nil
+}
+
 func (w *Worker) pollOnce(t time.Time) {
 	if w.client == nil {
 		return
@@ -274,14 +292,18 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	// Фильтр по сумме
 	if amount, err := strconv.ParseFloat(p.InAmount, 64); err == nil {
 		if w.cfg.MinAmount != nil && amount < *w.cfg.MinAmount {
+			log.Printf("[worker %d] skip %s: below min %.2f < %.2f", w.cfg.AccountID, p.ID, amount, *w.cfg.MinAmount)
 			return
 		}
 		if w.cfg.MaxAmount != nil && *w.cfg.MaxAmount > 0 && amount > *w.cfg.MaxAmount {
+			log.Printf("[worker %d] skip %s: above max %.2f > %.2f", w.cfg.AccountID, p.ID, amount, *w.cfg.MaxAmount)
 			return
 		}
 	}
 
+	start := time.Now()
 	resp, err := w.client.TakeLivePayment(w.bgCtx, p.ID)
+	takeDur := time.Since(start)
 	if err != nil {
 		if until, reason, ok := parsePenalty(err); ok {
 			w.penaltyUntil = until
@@ -312,6 +334,7 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	}
 
 	go w.notifyLiveAccepted(p, numericID)
+	log.Printf("[worker %d] took %s amount=%s rate=%s in %dms", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate, takeDur.Milliseconds())
 }
 
 func urlEncode(s string) string {

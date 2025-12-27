@@ -27,6 +27,7 @@ func New(addr string, mgr *engine.Manager) *Server {
 	mux.HandleFunc("/accounts/reload", s.handleReloadAccount)
 	mux.HandleFunc("/orders/take", s.handleTakeOrder)
 	mux.HandleFunc("/orders/complete", s.handleComplete)
+	mux.HandleFunc("/orders/cancel", s.handleCancel)
 
 	s.srv = &http.Server{
 		Addr:         addr,
@@ -119,6 +120,28 @@ func (s *Server) handleComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.mgr.CompletePayment(r.Context(), req.AccountID, req.PaymentID); err != nil {
 		log.Printf("complete payment error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"status": "error"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleCancel cancels payment.
+func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		AccountID int64  `json:"account_id"`
+		PaymentID string `json:"payment_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.AccountID == 0 || req.PaymentID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if err := s.mgr.CancelPayment(r.Context(), req.AccountID, req.PaymentID); err != nil {
+		log.Printf("cancel payment error: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"status": "error"})
 		return
 	}

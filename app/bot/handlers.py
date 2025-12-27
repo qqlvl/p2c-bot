@@ -121,6 +121,29 @@ async def on_paid(callback: types.CallbackQuery) -> None:
     # При желании можно логировать в будущем rate/fee/payment_id
 
 
+@router.callback_query(F.data.startswith("cancel:"))
+async def on_cancel(callback: types.CallbackQuery) -> None:
+    """Отмена заявки из уведомления."""
+    parts = (callback.data or "").split(":")
+    # expected: cancel:<acc_id>:<payment_id>
+    if len(parts) < 3:
+        await callback.answer("Не распознал заявку", show_alert=True)
+        return
+    try:
+        acc_id = int(parts[1])
+        payment_id = parts[2]
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка данных заявки", show_alert=True)
+        return
+
+    ok = await engine_client.cancel_order(acc_id, payment_id)
+    if not ok:
+        await callback.answer("Не удалось отменить заявку на стороне P2C", show_alert=True)
+        return
+
+    await callback.answer("❌ Заявка отменена.", show_alert=False)
+
+
 class AddAccount(StatesGroup):
     waiting_token = State()
     waiting_name = State()

@@ -86,5 +86,19 @@ class P2CEngineClient:
             except httpx.HTTPError:
                 return False
 
+    async def cancel_order(self, account_id: int, payment_id: str) -> bool:
+        url = self._build_url("/orders/cancel")
+        if not url:
+            return False
+        payload = {"account_id": account_id, "payment_id": payment_id}
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            try:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                return bool(data.get("ok", True))
+            except httpx.HTTPError:
+                return False
+
 
 engine_client = P2CEngineClient()
