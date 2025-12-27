@@ -276,11 +276,13 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	if _, ok := w.seen[p.ID]; ok {
 		return
 	}
-	w.seen[p.ID] = time.Now()
-
 	now := time.Now()
+	w.seen[p.ID] = now
+
+	start := time.Now()
 	// Если уже есть активный ордер, не дергаем take, чтобы не ловить 400/ActiveOrderExists.
 	if w.isActiveLocked(now) {
+		log.Printf("[worker %d] skip %s: active order in progress", w.cfg.AccountID, p.ID)
 		return
 	}
 
@@ -301,7 +303,6 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 		}
 	}
 
-	start := time.Now()
 	resp, err := w.client.TakeLivePayment(w.bgCtx, p.ID)
 	takeDur := time.Since(start)
 	if err != nil {
@@ -312,13 +313,13 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 				msg := fmt.Sprintf("⛔️ Блок до %s\nПричина: %s\nЗаявки временно не принимаем.", until.Local().Format("15:04:05"), reason)
 				w.sendTelegram(msg)
 			}
-	} else if isActiveExists(err) {
-		w.bumpActiveLock()
-	} else {
-		log.Printf("[worker %d] take %s error: %v", w.cfg.AccountID, p.ID, err)
+		} else if isActiveExists(err) {
+			w.bumpActiveLock()
+		} else {
+			log.Printf("[worker %d] take %s error in %dms: %v", w.cfg.AccountID, p.ID, takeDur.Milliseconds(), err)
+		}
+		return
 	}
-	return
-}
 	w.setActiveLock(p.ID, p.ExpiresAt)
 
 	var numericID int64
