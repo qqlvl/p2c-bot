@@ -26,6 +26,7 @@ type TraceTimings struct {
 	TCPConnection time.Duration
 	TLSHandshake  time.Duration
 	ServerTime    time.Duration // from write to first byte
+	ReusedConn    bool
 }
 
 // TakeResult carries take response details.
@@ -128,6 +129,9 @@ func (c *Client) TakeLivePayment(ctx context.Context, id string) (*TakeResult, e
 			if !writeDone.IsZero() {
 				t.ServerTime = time.Since(writeDone)
 			}
+		},
+		GotConn: func(info httptrace.GotConnInfo) {
+			t.ReusedConn = info.Reused
 		},
 	}
 	ctx = httptrace.WithClientTrace(ctx, trace)

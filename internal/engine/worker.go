@@ -336,7 +336,7 @@ func (w *Worker) handleLivePayment(p p2c.LivePayment) {
 	}
 
 	go w.notifyLiveAccepted(p, numericID)
-	log.Printf("[worker %d] took %s amount=%s rate=%s in %dms (toTake=%dms cfRay=%s dns=%dms conn=%dms tls=%dms srv=%dms)", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate, takeDur.Milliseconds(), toTake.Milliseconds(), takeRes.CFRay, takeRes.Timing.DNSLookup.Milliseconds(), takeRes.Timing.TCPConnection.Milliseconds(), takeRes.Timing.TLSHandshake.Milliseconds(), takeRes.Timing.ServerTime.Milliseconds())
+	log.Printf("[worker %d] took %s amount=%s rate=%s in %dms (toTake=%dms cfRay=%s dns=%dms conn=%dms tls=%dms srv=%dms reused=%v)", w.cfg.AccountID, p.ID, p.InAmount, p.ExchangeRate, takeDur.Milliseconds(), toTake.Milliseconds(), takeRes.CFRay, takeRes.Timing.DNSLookup.Milliseconds(), takeRes.Timing.TCPConnection.Milliseconds(), takeRes.Timing.TLSHandshake.Milliseconds(), takeRes.Timing.ServerTime.Milliseconds(), takeRes.Timing.ReusedConn)
 }
 
 func urlEncode(s string) string {

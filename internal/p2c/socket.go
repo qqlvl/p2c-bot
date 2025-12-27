@@ -52,6 +52,8 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 	log.Printf("ws connected: %s (pingInterval=%s)", wsURL, pingInterval)
 
 	msgCount := 0
+	addTimes := make(map[string]time.Time)
+	var listIDs []string
 
 	for {
 		select {
@@ -93,6 +95,17 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 			}
 			var event string
 			if err := json.Unmarshal(arr[0], &event); err != nil || event != "list:update" {
+				// list:snapshot может прийти как отдельное событие
+				if event == "list:snapshot" {
+					var snapshot []LivePayment
+					if err := json.Unmarshal(arr[1], &snapshot); err == nil {
+						listIDs = listIDs[:0]
+						for _, p := range snapshot {
+							listIDs = append(listIDs, p.ID)
+							addTimes[p.ID] = time.Now()
+						}
+					}
+				}
 				continue
 			}
 			var updates []listUpdate
@@ -102,7 +115,27 @@ func SubscribeSocket(ctx context.Context, baseURL, accessToken string, handler f
 			for _, u := range updates {
 				log.Printf("ws list:update op=%s id=%s", u.Op, idFrom(u.Data))
 				if u.Op == "add" && u.Data != nil {
+					// фиксируем время появления в стриме
+					addTimes[u.Data.ID] = time.Now()
+					// обновляем локальный список для расчета ttl
+					if u.Pos != nil && *u.Pos >= 0 && *u.Pos <= len(listIDs) {
+						pos := *u.Pos
+						listIDs = append(listIDs[:pos], append([]string{u.Data.ID}, listIDs[pos:]...)...)
+					} else {
+						listIDs = append(listIDs, u.Data.ID)
+					}
 					handler(*u.Data)
+				}
+				if u.Op == "remove" {
+					// если пришел pos, пытаемся вытащить id и посчитать ttl
+					if u.Pos != nil && *u.Pos >= 0 && *u.Pos < len(listIDs) {
+						id := listIDs[*u.Pos]
+						ttl := time.Since(addTimes[id])
+						log.Printf("ws list:remove id=%s ttl=%dms", id, ttl.Milliseconds())
+						// убираем из списка
+						listIDs = append(listIDs[:*u.Pos], listIDs[*u.Pos+1:]...)
+						delete(addTimes, id)
+					}
 				}
 			}
 		}
