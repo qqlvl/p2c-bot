@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/valyala/fasthttp"
 )
@@ -18,7 +19,13 @@ func NewClient(baseURL, accessToken string) *Client {
 	return &Client{
 		baseURL:     baseURL,
 		accessToken: accessToken,
-		httpClient:  &fasthttp.Client{},
+		httpClient: &fasthttp.Client{
+			NoDefaultUserAgentHeader: true,
+			MaxConnsPerHost:          1024,
+			ReadTimeout:              2 * time.Second,
+			WriteTimeout:             2 * time.Second,
+			MaxIdleConnDuration:      30 * time.Second,
+		},
 	}
 }
 
